@@ -45,9 +45,15 @@ turn
   .description("Start a turn from an issue number")
   .requiredOption("--issue <n>", "GitHub issue number")
   .action(async (opts) => {
-    const issueId = Number.parseInt(String(opts.issue), 10);
+    const issueRaw = String(opts.issue).trim();
+    if (!/^[0-9]+$/.test(issueRaw)) {
+      console.error("turn start: --issue debe ser un entero positivo.");
+      process.exitCode = 1;
+      return;
+    }
 
-    if (!Number.isInteger(issueId) || issueId <= 0) {
+    const issueId = Number(issueRaw);
+    if (!Number.isSafeInteger(issueId) || issueId <= 0) {
       console.error("turn start: --issue debe ser un entero positivo.");
       process.exitCode = 1;
       return;
