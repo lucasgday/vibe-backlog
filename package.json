@@ -1,0 +1,35 @@
+{
+  "name": "vibe-backlog",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "vibe": "dist/cli.cjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/core/index.ts src/cli.ts --dts --format esm,cjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "execa": "^9.6.1",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,22 @@
+version: 1
+project:
+  source_of_truth: "github"
+
+interaction_contract:
+  preflight:
+    required:
+      - git_status
+      - tracker_open_items_summary
+      - tests_last_result_or_run_plan
+  postflight:
+    required:
+      - tracker_update_status
+      - tracker_append_agent_log
+      - record_tests_result
+      - next_actions
+      - risks_and_rollbacks
+
+editing_rules:
+  agent:
+    append_only_default: true
+    may_edit_user_notes: false
