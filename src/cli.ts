@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { execa } from "execa";
-import { PostflightSchemaV1 } from "./core/postflight";
+import { buildTrackerCommands, normalizeGitHubIssueId, PostflightSchemaV1 } from "./core/postflight";
 
 const program = new Command();
 
@@ -55,43 +55,16 @@ program
       if (!opts.apply) return;
 
       const issueIdRaw = parsed.data.work.issue_id;
-      const issueId = typeof issueIdRaw === "number" ? String(issueIdRaw) : String(issueIdRaw);
+      const issueId = normalizeGitHubIssueId(issueIdRaw);
 
-      if (!/^[0-9]+$/.test(issueId)) {
+      if (!issueId) {
         console.error("postflight --apply: work.issue_id debe ser el número de issue de GitHub (ej: 1, 42).");
         process.exitCode = 1;
         return;
       }
 
       const updates = parsed.data.tracker_updates ?? [];
-      const cmds: Array<{ cmd: string; args: string[] }> = [];
-
-      for (const u of updates) {
-        if (u.type === "comment_append") {
-          const body = u.body ?? "";
-          if (body.trim()) cmds.push({ cmd: "gh", args: ["issue", "comment", issueId, "--body", body] });
-        }
-
-        if (u.type === "label_add") {
-          const label = u.label ?? "";
-          if (label.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--add-label", label] });
-        }
-
-        if (u.type === "label_remove") {
-          const label = u.label ?? "";
-          if (label.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--remove-label", label] });
-        }
-
-        if (u.type === "status") {
-          const to = u.to ?? "";
-          if (to.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--add-label", to] });
-        }
-
-        if (u.type === "link_pr") {
-          const n = u.pr_number ?? null;
-          if (n) cmds.push({ cmd: "gh", args: ["issue", "comment", issueId, "--body", `Linked PR: #${n}`] });
-        }
-      }
+      const cmds = buildTrackerCommands(issueId, updates);
 
       if (!cmds.length) {
         console.log("postflight --apply: no hay tracker_updates aplicables.");
