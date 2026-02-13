@@ -151,3 +151,81 @@ Phase 2 (Turn context):
 
 Phase 3 (UI):
 - Only after Phase 1–2 is stable.
+
+---
+
+## Role passes (State-of-the-art) — MUST
+
+### What “subagents” means in this repo
+We simulate specialist sub-agents by running **separate review passes**. Each pass must:
+- Write notes to an append-only file: `.vibe/reviews/<issue_id>/<pass>.md`
+- Add a `tracker_updates: comment_append` summary into `.vibe/artifacts/postflight.json`
+- Never overwrite user-owned notes.
+
+### Pass order (default)
+1) **Implementation Pass** (role: owner of change)
+2) **Security Pass** (role: AppSec)
+3) **Quality Pass** (role: QA / Test)
+4) **UX/Frontend Pass** (only if UI touched)
+5) **Ops/Release Pass** (only if packaging/CLI/CI touched)
+
+If the change is purely docs, skip to Quality Pass.
+
+### Implementation Pass (Backend / Frontend)
+**Backend SOTA checklist**
+- “Small surface area” changes; avoid cascading refactors.
+- Clear error handling + typed boundaries.
+- Observability hooks where it matters (structured logs; future OTel-friendly). (OpenTelemetry as standard signals: traces/metrics/logs)  
+  References: OpenTelemetry docs.  
+
+**Frontend SOTA checklist**
+- Accessibility baseline: semantic HTML, keyboard nav, focus management; follow WCAG 2.2 principles.  
+  References: WCAG 2.2 + Next.js accessibility docs.  
+- Performance mindset: align with Core Web Vitals (LCP/INP/CLS). INP replaces FID.  
+  References: Google/Web.dev Core Web Vitals + INP update.  
+
+### Security Pass (AppSec) — MUST for any code change
+Use modern baselines:
+- **OWASP Top 10** (current release noted by OWASP project; also keep prior risk categories in mind: access control, injection, misconfig, crypto).  
+- **OWASP ASVS** for “what to verify” in web apps/services.
+- **NIST SSDF (SP 800-218)** as secure SDLC practice set.
+- **Supply-chain**: SLSA mindset + avoid dependency/supply chain footguns.
+- **Secrets**: no secrets committed; prefer GitHub secret scanning when available.
+
+Security pass outputs:
+- Threat model quick scan (1–2 paragraphs): what could go wrong + mitigations.
+- Concrete checks: authz, input validation, data exposure, error leakage, secure defaults.
+
+### Quality Pass (QA/Test) — MUST
+Modern test mix:
+- Unit + integration where logic lives.
+- Add/adjust CLI tests if CLI behavior changed.
+- If UI flows exist, prefer Playwright E2E for critical paths (happy path + one failure).  
+  Reference: Playwright docs.
+
+Quality pass outputs:
+- “What I tested” + exact commands.
+- What remains untested (explicit).
+
+### UX/Frontend Pass (only if UI touched)
+- Check a11y regressions (WCAG 2.2 mindset).
+- Check interaction latency (INP) and layout stability (CLS) basics.
+- Validate copy + empty states + error states.
+
+### Ops/Release Pass (only if packaging/CLI/CI touched)
+- Deterministic execution: prefer repo-local commands:
+  - `pnpm build`
+  - `node dist/cli.cjs preflight`
+  - `node dist/cli.cjs postflight --apply --dry-run`
+- Supply-chain sanity: minimize new deps; note risk.
+
+### References (canonical)
+- Codex reads AGENTS.md before work.
+- OWASP Top 10 + OWASP ASVS.
+- NIST SSDF (SP 800-218).
+- SLSA framework.
+- OpenTelemetry docs.
+- Core Web Vitals + INP replaces FID.
+- WCAG 2.2.
+- Playwright docs.
+
