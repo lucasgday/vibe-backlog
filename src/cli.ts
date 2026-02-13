@@ -2,10 +2,117 @@
 import { Command } from "commander";
 import { execa } from "execa";
 import { PostflightSchemaV1 } from "./core/postflight";
+import { buildTurnBranch, clearTurnContext, readTurnContext, writeTurnContext } from "./core/turn";
 
 const program = new Command();
 
 program.name("vibe").description("Vibe-backlog CLI (MVP)").version("0.1.0");
+
+async function issueTitleFromGitHub(issueId: number): Promise<string> {
+  try {
+    const issue = await execa("gh", ["issue", "view", String(issueId), "--json", "title", "-q", ".title"], {
+      stdio: "pipe",
+    });
+    const title = issue.stdout.trim();
+    if (title) {
+      return title;
+    }
+  } catch {
+    // Fall back below when gh is unavailable or issue doesn't exist.
+  }
+
+  return `issue-${issueId}`;
+}
+
+async function checkoutOrCreateBranch(branch: string): Promise<void> {
+  const probe = await execa("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+    stdio: "pipe",
+    reject: false,
+  });
+
+  if (probe.exitCode === 0) {
+    await execa("git", ["checkout", branch], { stdio: "inherit" });
+    return;
+  }
+
+  await execa("git", ["checkout", "-b", branch], { stdio: "inherit" });
+}
+
+const turn = program.command("turn").description("Manage active local turn context");
+
+turn
+  .command("start")
+  .description("Start a turn from an issue number")
+  .requiredOption("--issue <n>", "GitHub issue number")
+  .action(async (opts) => {
+    const issueId = Number.parseInt(String(opts.issue), 10);
+
+    if (!Number.isInteger(issueId) || issueId <= 0) {
+      console.error("turn start: --issue debe ser un entero positivo.");
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      const issueTitle = await issueTitleFromGitHub(issueId);
+      const branch = buildTurnBranch(issueId, issueTitle);
+
+      await checkoutOrCreateBranch(branch);
+
+      const turnContext = {
+        issue_id: issueId,
+        branch,
+        base_branch: "main",
+        started_at: new Date().toISOString(),
+        issue_title: issueTitle,
+      };
+
+      await writeTurnContext(turnContext);
+      console.log(JSON.stringify(turnContext, null, 2));
+    } catch (error) {
+      console.error("turn start: ERROR");
+      console.error(error);
+      process.exitCode = 1;
+    }
+  });
+
+turn
+  .command("show")
+  .description("Show active turn context")
+  .action(async () => {
+    try {
+      const activeTurn = await readTurnContext();
+      if (!activeTurn) {
+        console.log("no active turn");
+        return;
+      }
+
+      console.log(JSON.stringify(activeTurn, null, 2));
+    } catch (error) {
+      console.error("turn show: ERROR");
+      console.error(error);
+      process.exitCode = 1;
+    }
+  });
+
+turn
+  .command("end")
+  .description("End active turn context")
+  .action(async () => {
+    try {
+      const deleted = await clearTurnContext();
+      if (!deleted) {
+        console.log("no active turn");
+        return;
+      }
+
+      console.log("turn ended");
+    } catch (error) {
+      console.error("turn end: ERROR");
+      console.error(error);
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command("preflight")
@@ -40,6 +147,26 @@ program
     try {
       const raw = await fs.readFile(opts.file, "utf8");
       const json = JSON.parse(raw);
+
+      if (opts.apply) {
+        const activeTurn = await readTurnContext();
+        if (activeTurn) {
+          const work =
+            typeof json.work === "object" && json.work !== null ? (json.work as Record<string, unknown>) : {};
+          json.work = work;
+
+          const issueIdCandidate = work.issue_id;
+          if (issueIdCandidate === undefined || issueIdCandidate === null || issueIdCandidate === "") {
+            work.issue_id = activeTurn.issue_id;
+          }
+
+          const branchCandidate = work.branch;
+          if (typeof branchCandidate !== "string" || !branchCandidate.trim()) {
+            work.branch = activeTurn.branch;
+          }
+        }
+      }
+
       const parsed = PostflightSchemaV1.safeParse(json);
 
       if (!parsed.success) {
