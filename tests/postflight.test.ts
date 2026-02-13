@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTrackerCommands, normalizeGitHubIssueId, PostflightSchemaV1 } from "../src/core/postflight";
+import {
+  appendIssueAutocloseReference,
+  buildTrackerCommands,
+  collectLinkedPrNumbers,
+  normalizeGitHubIssueId,
+  PostflightSchemaV1,
+} from "../src/core/postflight";
 
 const BASE_POSTFLIGHT = {
   version: 1,
@@ -59,5 +65,28 @@ describe("postflight schema and apply commands", () => {
     expect(normalizeGitHubIssueId("002")).toBe("002");
     expect(normalizeGitHubIssueId("2abc")).toBeNull();
     expect(normalizeGitHubIssueId("1e3")).toBeNull();
+  });
+
+  it("collects unique PR numbers from link_pr updates", () => {
+    const prNumbers = collectLinkedPrNumbers([
+      { type: "link_pr", pr_number: 8 },
+      { type: "label_add", label: "status:in-review" },
+      { type: "link_pr", pr_number: 8 },
+      { type: "link_pr", pr_number: 9 },
+      { type: "link_pr", pr_number: null },
+    ]);
+
+    expect(prNumbers).toEqual([8, 9]);
+  });
+
+  it("appends Fixes token when PR body does not reference issue", () => {
+    const nextBody = appendIssueAutocloseReference("Implement feature", "2");
+    expect(nextBody).toBe("Implement feature\n\nFixes #2");
+  });
+
+  it("does not duplicate issue autoclose reference in PR body", () => {
+    const body = "Improve docs\n\nCloses #2";
+    const nextBody = appendIssueAutocloseReference(body, "2");
+    expect(nextBody).toBe(body);
   });
 });

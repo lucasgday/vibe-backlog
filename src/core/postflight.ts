@@ -94,3 +94,32 @@ export function buildTrackerCommands(issueId: string, updates: PostflightV1["tra
 
   return cmds;
 }
+
+export function collectLinkedPrNumbers(updates: PostflightV1["tracker_updates"]): number[] {
+  const prNumbers = new Set<number>();
+
+  for (const update of updates) {
+    if (update.type !== "link_pr") continue;
+    if (update.pr_number) {
+      prNumbers.add(update.pr_number);
+    }
+  }
+
+  return Array.from(prNumbers);
+}
+
+export function hasIssueAutocloseReference(prBody: string, issueId: string): boolean {
+  const escapedIssueId = issueId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`\\b(?:fixes|closes|resolves)\\s*#${escapedIssueId}\\b`, "i");
+  return regex.test(prBody);
+}
+
+export function appendIssueAutocloseReference(prBody: string, issueId: string): string {
+  if (hasIssueAutocloseReference(prBody, issueId)) {
+    return prBody;
+  }
+
+  const token = `Fixes #${issueId}`;
+  const baseBody = prBody.trimEnd();
+  return baseBody ? `${baseBody}\n\n${token}` : token;
+}

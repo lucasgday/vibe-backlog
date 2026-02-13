@@ -1,8 +1,61 @@
 import { Command } from "commander";
 import { execa } from "execa";
-import { buildTrackerCommands, normalizeGitHubIssueId, PostflightSchemaV1 } from "./core/postflight";
+import {
+  appendIssueAutocloseReference,
+  buildTrackerCommands,
+  collectLinkedPrNumbers,
+  normalizeGitHubIssueId,
+  PostflightSchemaV1,
+} from "./core/postflight";
 
 type ExecaFn = typeof execa;
+
+function printGhCommand(args: string[]): void {
+  console.log("$ " + ["gh", ...args].join(" "));
+}
+
+type PrBodySyncParams = {
+  execaFn: ExecaFn;
+  issueId: string;
+  prNumbers: number[];
+  dryRun: boolean;
+};
+
+async function syncPrBodiesWithIssueReference(params: PrBodySyncParams): Promise<void> {
+  const { execaFn, issueId, prNumbers, dryRun } = params;
+
+  for (const prNumber of prNumbers) {
+    const pr = String(prNumber);
+
+    if (dryRun) {
+      printGhCommand(["pr", "view", pr, "--json", "body,url"]);
+      printGhCommand(["pr", "edit", pr, "--body", `<existing-body>\\n\\nFixes #${issueId}`]);
+      continue;
+    }
+
+    const viewArgs = ["pr", "view", pr, "--json", "body,url"];
+    printGhCommand(viewArgs);
+    const prView = await execaFn("gh", viewArgs, { stdio: "pipe" });
+
+    let currentBody = "";
+    if (prView.stdout.trim()) {
+      const parsed = JSON.parse(prView.stdout) as { body?: unknown };
+      if (typeof parsed.body === "string") {
+        currentBody = parsed.body;
+      }
+    }
+
+    const nextBody = appendIssueAutocloseReference(currentBody, issueId);
+    if (nextBody === currentBody) {
+      console.log(`PR #${pr} already references issue #${issueId}.`);
+      continue;
+    }
+
+    const editArgs = ["pr", "edit", pr, "--body", nextBody];
+    printGhCommand(editArgs);
+    await execaFn("gh", editArgs, { stdio: "inherit" });
+  }
+}
 
 export function createProgram(execaFn: ExecaFn = execa): Command {
   const program = new Command();
@@ -67,19 +120,27 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
 
         const updates = parsed.data.tracker_updates ?? [];
         const cmds = buildTrackerCommands(issueId, updates);
+        const linkedPrNumbers = collectLinkedPrNumbers(updates);
 
-        if (!cmds.length) {
+        if (!cmds.length && !linkedPrNumbers.length) {
           console.log("postflight --apply: no hay tracker_updates aplicables.");
           return;
         }
 
         console.log("\nApplying updates:");
         for (const c of cmds) {
-          console.log("$ " + [c.cmd, ...c.args].join(" "));
+          printGhCommand(c.args);
           if (!opts.dryRun) {
             await execaFn(c.cmd, c.args, { stdio: "inherit" });
           }
         }
+
+        await syncPrBodiesWithIssueReference({
+          execaFn,
+          issueId,
+          prNumbers: linkedPrNumbers,
+          dryRun: Boolean(opts.dryRun),
+        });
 
         console.log("\npostflight --apply: DONE");
       } catch (e) {
