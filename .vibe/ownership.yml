@@ -1,0 +1,13 @@
+version: 1
+protected_sections:
+  markers:
+    user_notes:
+      start: "<!-- vibe:user-notes:start -->"
+      end: "<!-- vibe:user-notes:end -->"
+    agent_log:
+      start: "<!-- vibe:agent-log:start -->"
+      end: "<!-- vibe:agent-log:end -->"
+rules:
+  default:
+    agent_can: ["append_comment"]
+    agent_cannot: ["overwrite_issue_body", "edit_user_notes_section"]
