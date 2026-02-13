@@ -7,6 +7,7 @@ import {
   normalizeGitHubIssueId,
   PostflightSchemaV1,
 } from "./core/postflight";
+import { buildTurnBranch, clearTurnContext, readTurnContext, writeTurnContext } from "./core/turn";
 
 type ExecaFn = typeof execa;
 
@@ -57,10 +58,122 @@ async function syncPrBodiesWithIssueReference(params: PrBodySyncParams): Promise
   }
 }
 
+async function issueTitleFromGitHub(execaFn: ExecaFn, issueId: number): Promise<string> {
+  try {
+    const issue = await execaFn("gh", ["issue", "view", String(issueId), "--json", "title", "-q", ".title"], {
+      stdio: "pipe",
+    });
+    const title = issue.stdout.trim();
+    if (title) {
+      return title;
+    }
+  } catch {
+    // Fall through to deterministic fallback.
+  }
+
+  return `issue-${issueId}`;
+}
+
+async function checkoutOrCreateBranch(execaFn: ExecaFn, branch: string): Promise<void> {
+  const probe = await execaFn("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+    stdio: "pipe",
+    reject: false,
+  });
+
+  if (probe.exitCode === 0) {
+    await execaFn("git", ["checkout", branch], { stdio: "inherit" });
+    return;
+  }
+
+  await execaFn("git", ["checkout", "-b", branch], { stdio: "inherit" });
+}
+
 export function createProgram(execaFn: ExecaFn = execa): Command {
   const program = new Command();
 
   program.name("vibe").description("Vibe-backlog CLI (MVP)").version("0.1.0");
+
+  const turn = program.command("turn").description("Manage active local turn context");
+
+  turn
+    .command("start")
+    .description("Start a turn from an issue number")
+    .requiredOption("--issue <n>", "GitHub issue number")
+    .action(async (opts) => {
+      const issueRaw = String(opts.issue).trim();
+      if (!/^[0-9]+$/.test(issueRaw)) {
+        console.error("turn start: --issue debe ser un entero positivo.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const issueId = Number(issueRaw);
+      if (!Number.isSafeInteger(issueId) || issueId <= 0) {
+        console.error("turn start: --issue debe ser un entero positivo.");
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        const issueTitle = await issueTitleFromGitHub(execaFn, issueId);
+        const branch = buildTurnBranch(issueId, issueTitle);
+
+        await checkoutOrCreateBranch(execaFn, branch);
+
+        const turnContext = {
+          issue_id: issueId,
+          branch,
+          base_branch: "main",
+          started_at: new Date().toISOString(),
+          issue_title: issueTitle,
+        };
+
+        await writeTurnContext(turnContext);
+        console.log(JSON.stringify(turnContext, null, 2));
+      } catch (error) {
+        console.error("turn start: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  turn
+    .command("show")
+    .description("Show active turn context")
+    .action(async () => {
+      try {
+        const activeTurn = await readTurnContext();
+        if (!activeTurn) {
+          console.log("no active turn");
+          return;
+        }
+
+        console.log(JSON.stringify(activeTurn, null, 2));
+      } catch (error) {
+        console.error("turn show: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  turn
+    .command("end")
+    .description("End active turn context")
+    .action(async () => {
+      try {
+        const deleted = await clearTurnContext();
+        if (!deleted) {
+          console.log("no active turn");
+          return;
+        }
+
+        console.log("turn ended");
+      } catch (error) {
+        console.error("turn end: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command("preflight")
@@ -95,6 +208,26 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       try {
         const raw = await fs.readFile(opts.file, "utf8");
         const json = JSON.parse(raw);
+
+        if (opts.apply) {
+          const activeTurn = await readTurnContext();
+          if (activeTurn) {
+            const work =
+              typeof json.work === "object" && json.work !== null ? (json.work as Record<string, unknown>) : {};
+            json.work = work;
+
+            const issueIdCandidate = work.issue_id;
+            if (issueIdCandidate === undefined || issueIdCandidate === null || issueIdCandidate === "") {
+              work.issue_id = activeTurn.issue_id;
+            }
+
+            const branchCandidate = work.branch;
+            if (typeof branchCandidate !== "string" || !branchCandidate.trim()) {
+              work.branch = activeTurn.branch;
+            }
+          }
+        }
+
         const parsed = PostflightSchemaV1.safeParse(json);
 
         if (!parsed.success) {
