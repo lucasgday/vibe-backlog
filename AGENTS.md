@@ -28,6 +28,48 @@ and ask the user for:
 ---
 
 ## Workflow (Default)
+## Issue-first + Triage (MUST)
+
+### When the user introduces a new topic
+The agent MUST NOT start implementation immediately. It MUST:
+
+1) Run (or request) **current context**:
+   - Run: `git status` (+ optional `tree -L 3`)
+   - Ask the user for: a screenshot (if relevant)
+   - Run: `pnpm build && node dist/cli.cjs preflight`
+
+2) **Detect whether the topic maps to an existing issue**:
+   - If yes: confirm with the user: "seguimos con #<N>?"
+   - If not: propose creating a new issue with a clear title and DoD.
+
+3) **Ask about in-progress / pending topics** and propose priorities:
+   - Summarize open issues briefly (max 5) from preflight.
+   - Ask: "¿Querés retomar alguno de estos o creamos uno nuevo?"
+   - Suggest a priority order using this rubric:
+     - (P0) blocks shipping / breaks workflow / data loss risk
+     - (P1) improves dogfooding loop (preflight/postflight/apply/turn context)
+     - (P2) usability improvements and niceties
+   - Provide 2-3 recommended next actions and ask the user to pick one.
+
+### One topic = one issue (scope control)
+- Do not mix multiple unrelated topics in a single issue/branch.
+- If the user expands scope mid-way, propose:
+  - keep current issue focused
+  - create a follow-up issue for the new topic
+
+### Issue status hygiene (MUST)
+- Every turn should update GitHub status labels via `postflight --apply`:
+  - `status:backlog`, `status:in-progress`, `status:in-review`, `status:done`
+- If blocked, add a comment explaining the blocker and label (optional): `status:blocked` (if exists).
+
+### Commands to prefer (avoid global-bin drift)
+- Always build before running vibe:
+  - `pnpm build`
+- Prefer repo-local CLI:
+  - `node dist/cli.cjs preflight`
+  - `node dist/cli.cjs postflight`
+  - `node dist/cli.cjs postflight --apply`
+
 ### 0) Pick an Issue
 - If no issue exists, create one: `gh issue create ...`
 - Reference its number in all branch/PR work.
