@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { execa } from "execa";
+import { PostflightSchemaV1 } from "./core/postflight";
 
 const program = new Command();
 
-program
-  .name("vibe")
-  .description("Vibe-backlog CLI (MVP)")
-  .version("0.1.0");
+program.name("vibe").description("Vibe-backlog CLI (MVP)").version("0.1.0");
 
 program
   .command("preflight")
@@ -24,8 +22,9 @@ program
       const issues = await execa("gh", ["issue", "list", "-L", "10"], { stdio: "pipe" });
       console.log("\nOpen issues (top 10):");
       console.log(issues.stdout);
-    } catch {
+    } catch (e) {
       console.log("\nOpen issues: (gh issue list not available here)");
+      if (e instanceof Error) console.log(String(e.message || e));
     }
   });
 
@@ -33,22 +32,81 @@ program
   .command("postflight")
   .description("Validate postflight artifact")
   .option("-f, --file <path>", "Path to postflight JSON", ".vibe/artifacts/postflight.json")
+  .option("--apply", "Apply tracker updates using gh", false)
+  .option("--dry-run", "Print gh commands without executing them", false)
   .action(async (opts) => {
     const fs = await import("node:fs/promises");
-    const { PostflightSchemaV1 } = await import("./core/postflight");
 
     try {
       const raw = await fs.readFile(opts.file, "utf8");
       const json = JSON.parse(raw);
       const parsed = PostflightSchemaV1.safeParse(json);
+
       if (!parsed.success) {
         console.error("postflight: INVALID");
         console.error(parsed.error.format());
         process.exitCode = 1;
         return;
       }
+
       console.log("postflight: OK");
-      console.log(`issue:  | branch: `);
+      console.log(`issue: ${parsed.data.work.issue_id} | branch: ${parsed.data.work.branch}`);
+
+      if (!opts.apply) return;
+
+      const issueIdRaw = parsed.data.work.issue_id;
+      const issueId = typeof issueIdRaw === "number" ? String(issueIdRaw) : String(issueIdRaw);
+
+      if (!/^[0-9]+$/.test(issueId)) {
+        console.error("postflight --apply: work.issue_id debe ser el número de issue de GitHub (ej: 1, 42).");
+        process.exitCode = 1;
+        return;
+      }
+
+      const updates = parsed.data.tracker_updates ?? [];
+      const cmds: Array<{ cmd: string; args: string[] }> = [];
+
+      for (const u of updates) {
+        if (u.type === "comment_append") {
+          const body = u.body ?? "";
+          if (body.trim()) cmds.push({ cmd: "gh", args: ["issue", "comment", issueId, "--body", body] });
+        }
+
+        if (u.type === "label_add") {
+          const label = u.label ?? "";
+          if (label.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--add-label", label] });
+        }
+
+        if (u.type === "label_remove") {
+          const label = u.label ?? "";
+          if (label.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--remove-label", label] });
+        }
+
+        if (u.type === "status") {
+          const to = u.to ?? "";
+          if (to.trim()) cmds.push({ cmd: "gh", args: ["issue", "edit", issueId, "--add-label", to] });
+        }
+
+        if (u.type === "link_pr") {
+          const n = u.pr_number ?? null;
+          if (n) cmds.push({ cmd: "gh", args: ["issue", "comment", issueId, "--body", `Linked PR: #${n}`] });
+        }
+      }
+
+      if (!cmds.length) {
+        console.log("postflight --apply: no hay tracker_updates aplicables.");
+        return;
+      }
+
+      console.log("\nApplying updates:");
+      for (const c of cmds) {
+        console.log("$ " + [c.cmd, ...c.args].join(" "));
+        if (!opts.dryRun) {
+          await execa(c.cmd, c.args, { stdio: "inherit" });
+        }
+      }
+
+      console.log("\npostflight --apply: DONE");
     } catch (e) {
       console.error("postflight: ERROR");
       console.error(e);
