@@ -163,9 +163,10 @@ We simulate specialist sub-agents by running **separate review passes**. Each pa
 - Never overwrite user-owned notes.
 
 ### Pass order (default)
-1) **Implementation Pass** (role: owner of change)
-2) **Security Pass** (role: AppSec)
-3) **Quality Pass** (role: QA / Test)
+For any non-trivial change, the agent MUST execute this sequence:
+1) **Implementation Pass** (role: owner of change) (build the feature/fix)
+2) **Security Pass** (role: AppSec) (AppSec review: OWASP/NIST mindset)
+3) **Quality Pass** (role: QA / Test) (tests + edge cases)
 4) **UX/Frontend Pass** (only if UI touched)
 5) **Ops/Release Pass** (only if packaging/CLI/CI touched)
 
