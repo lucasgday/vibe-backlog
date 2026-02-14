@@ -105,6 +105,13 @@ cat > .vibe/artifacts/postflight.json <<'EOF'
 }
 EOF
 
+# IMPORTANT: replace placeholder issue_id with your active GitHub issue number
+# before any --apply command.
+# Replace this field:
+#   "issue_id": "1"
+# with your real issue id, for example:
+#   "issue_id": "42"
+
 # now these commands are valid
 vibe preflight
 vibe postflight
@@ -162,6 +169,12 @@ if [ ! -f .vibe/artifacts/postflight.json ]; then
 EOF
 fi
 cat .vibe/artifacts/postflight.json
+
+# 2.1) set the real active issue id before apply
+# Edit .vibe/artifacts/postflight.json and replace:
+#   "issue_id": "1"
+# with your real issue number, for example:
+#   "issue_id": "42"
 
 # 3) validate artifact
 vibe postflight
