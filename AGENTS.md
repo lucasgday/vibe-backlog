@@ -108,6 +108,30 @@ For every feature:
 - Ask the user for the GitHub issue number if missing.
 - End with: **"crear PR — cuál es el # del gh issue?"** (if not already known)
 
+### 6) Git/PR status guardrails (MUST)
+Before any push:
+- Run:
+  - `git fetch origin`
+  - `git status -sb`
+  - `git branch -vv`
+  - `gh pr list --head <current-branch> --state all`
+- If the current branch already has a PR in `MERGED` or `CLOSED` state:
+  - DO NOT keep pushing follow-up commits to that branch.
+  - Create a new branch from `origin/main`.
+  - Cherry-pick the follow-up commit(s) and open a new PR.
+
+Before pushing `main`:
+- Only push directly to `main` if the user explicitly asked for it.
+- Verify sync first:
+  - `git fetch origin`
+  - `git rev-list --left-right --count origin/main...main`
+- If local `main` is behind, sync first (`git rebase origin/main` or fast-forward merge), then push.
+- If push is rejected with "fetch first", stop and sync; never force-push `main`.
+
+After a PR is merged:
+- Run: `git fetch --prune origin`
+- Remove local branches that are already merged or have gone upstream.
+
 ---
 
 ## Tracker rules (GitHub default)
@@ -229,4 +253,3 @@ Quality pass outputs:
 - Core Web Vitals + INP replaces FID.
 - WCAG 2.2.
 - Playwright docs.
-
