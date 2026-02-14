@@ -67,6 +67,45 @@ vibe --help
 
 ```bash
 cd /path/to/another-repo
+
+# create a starter postflight artifact (required before postflight/apply)
+mkdir -p .vibe/artifacts
+cat > .vibe/artifacts/postflight.json <<'EOF'
+{
+  "version": 1,
+  "meta": {
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "actor": "agent",
+    "mode": "cli"
+  },
+  "work": {
+    "issue_id": "1",
+    "branch": "main",
+    "base_branch": "main"
+  },
+  "checks": {
+    "tests": {
+      "ran": false,
+      "result": "skipped"
+    }
+  },
+  "tracker_updates": [
+    {
+      "type": "comment_append",
+      "body": "Initial postflight draft."
+    }
+  ],
+  "next_actions": [
+    "Replace this line with the next concrete action."
+  ],
+  "risks": {
+    "summary": "Initial draft before real changes.",
+    "rollback_plan": "No tracker updates applied yet."
+  }
+}
+EOF
+
+# now these commands are valid
 vibe preflight
 vibe postflight
 vibe postflight --apply --dry-run
@@ -84,7 +123,44 @@ node /path/to/vibe-backlog/dist/cli.cjs preflight
 # 1) inspect repo + issue state
 vibe preflight
 
-# 2) generate/update postflight
+# 2) create or update postflight artifact
+mkdir -p .vibe/artifacts
+if [ ! -f .vibe/artifacts/postflight.json ]; then
+  cat > .vibe/artifacts/postflight.json <<'EOF'
+{
+  "version": 1,
+  "meta": {
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "actor": "agent",
+    "mode": "cli"
+  },
+  "work": {
+    "issue_id": "1",
+    "branch": "main",
+    "base_branch": "main"
+  },
+  "checks": {
+    "tests": {
+      "ran": false,
+      "result": "skipped"
+    }
+  },
+  "tracker_updates": [
+    {
+      "type": "comment_append",
+      "body": "Initial postflight draft."
+    }
+  ],
+  "next_actions": [
+    "Replace this line with the next concrete action."
+  ],
+  "risks": {
+    "summary": "Initial draft before real changes.",
+    "rollback_plan": "No tracker updates applied yet."
+  }
+}
+EOF
+fi
 cat .vibe/artifacts/postflight.json
 
 # 3) validate artifact
