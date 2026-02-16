@@ -22,6 +22,7 @@ import {
   REVIEW_REMEDIATION,
   runReviewCommand,
 } from "./core/review";
+import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -701,6 +702,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .command("review")
     .description("Run role-based review passes and publish final report to PR")
     .option("--issue <n>", "GitHub issue number override")
+    .option("--agent-provider <provider>", "Review agent provider (auto|codex|claude|gemini|command)", "auto")
     .option("--agent-cmd <cmd>", "External review agent command (fallback: VIBE_REVIEW_AGENT_CMD)")
     .option("--dry-run", "Plan review run without mutating git/GitHub", false)
     .option("--no-autofix", "Disable autofix mode for the external review agent")
@@ -724,10 +726,18 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         return;
       }
 
+      const providerRaw = typeof opts.agentProvider === "string" ? opts.agentProvider.trim().toLowerCase() : "auto";
+      if (!REVIEW_AGENT_PROVIDER_VALUES.includes(providerRaw as (typeof REVIEW_AGENT_PROVIDER_VALUES)[number])) {
+        console.error(`review: --agent-provider must be one of: ${REVIEW_AGENT_PROVIDER_VALUES.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+
       try {
         const result = await runReviewCommand(
           {
             issueOverride: opts.issue ?? null,
+            agentProvider: providerRaw,
             agentCmd: opts.agentCmd ?? null,
             dryRun: Boolean(opts.dryRun),
             autofix: Boolean(opts.autofix),
@@ -743,6 +753,13 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         const issueText = result.issueId ? `#${result.issueId}` : "-";
         const branchText = result.branch ?? "-";
         console.log(`review: issue=${issueText} branch=${branchText}`);
+        console.log(`review: provider=${result.provider} source=${result.providerSource}`);
+        console.log(
+          `review: resume_attempted=${result.resumeAttempted ? "yes" : "no"} resume_fallback=${result.resumeFallback ? "yes" : "no"}`,
+        );
+        if (result.providerHealedFromRuntime) {
+          console.log(`review: provider_auto_heal=${result.providerHealedFromRuntime}->${result.provider}`);
+        }
         console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
 
         if (result.prNumber) {

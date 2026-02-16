@@ -46,25 +46,43 @@ describe.sequential("cli review", () => {
   const originalCwd = process.cwd();
   let tempDir = "";
   let originalExitCode: number | undefined;
-  let originalAgentEnv: string | undefined;
+  const envKeys = [
+    "VIBE_REVIEW_AGENT_CMD",
+    "VIBE_REVIEW_CODEX_CMD",
+    "VIBE_REVIEW_CLAUDE_CMD",
+    "VIBE_REVIEW_GEMINI_CMD",
+    "CODEX_THREAD_ID",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_CI",
+    "__CFBundleIdentifier",
+  ] as const;
+  let originalEnv: Record<(typeof envKeys)[number], string | undefined>;
 
   beforeEach(() => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), "vibe-cli-review-test-"));
     process.chdir(tempDir);
     originalExitCode = process.exitCode;
     process.exitCode = undefined;
-    originalAgentEnv = process.env.VIBE_REVIEW_AGENT_CMD;
-    delete process.env.VIBE_REVIEW_AGENT_CMD;
+    originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]])) as Record<
+      (typeof envKeys)[number],
+      string | undefined
+    >;
+    for (const key of envKeys) {
+      delete process.env[key];
+    }
   });
 
   afterEach(() => {
     process.exitCode = originalExitCode;
     process.chdir(originalCwd);
     vi.restoreAllMocks();
-    if (originalAgentEnv === undefined) {
-      delete process.env.VIBE_REVIEW_AGENT_CMD;
-    } else {
-      process.env.VIBE_REVIEW_AGENT_CMD = originalAgentEnv;
+    for (const key of envKeys) {
+      const value = originalEnv[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     if (tempDir) {
       rmSync(tempDir, { recursive: true, force: true });
@@ -84,6 +102,22 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBe(2);
     expect(errors).toContain("review: no active turn.");
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("fails with exit 1 on invalid --agent-provider", async () => {
+    const errors: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--agent-provider", "invalid-provider"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("--agent-provider must be one of"))).toBe(true);
     expect(execaMock).not.toHaveBeenCalled();
   });
 
@@ -107,7 +141,7 @@ describe.sequential("cli review", () => {
     expect(execaMock).not.toHaveBeenCalled();
   });
 
-  it("fails with exit 1 when agent command is missing", async () => {
+  it("fails with exit 1 when no provider is available", async () => {
     await writeTurnContext({
       issue_id: 34,
       branch: "codex/issue-34-vibe-review",
@@ -130,8 +164,7 @@ describe.sequential("cli review", () => {
     await program.parseAsync(["node", "vibe", "review"]);
 
     expect(process.exitCode).toBe(1);
-    expect(errors.some((line) => line.includes("missing review agent command"))).toBe(true);
-    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(errors.some((line) => line.includes("no agent provider available"))).toBe(true);
   });
 
   it("creates PR when branch has no open PR", async () => {
@@ -351,5 +384,56 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBe(1);
     expect(errors.some((line) => line.includes("autopush blocked on main branch"))).toBe(true);
+  });
+
+  it("attempts codex resume first and falls back to standard codex exec", async () => {
+    process.env.CODEX_THREAD_ID = "thread-123";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123" }]) };
+      if (cmd === "zsh" && args[0] === "-lc" && args[1] === "command -v codex") return { stdout: "/usr/bin/codex\n", exitCode: 0 };
+      if (cmd === "codex" && args[0] === "exec" && args[1] === "resume")
+        return { stdout: "not-json", stderr: "", exitCode: 1 };
+      if (cmd === "codex" && args[0] === "exec" && args[1] === "--skip-git-repo-check") {
+        return { stdout: buildAgentOutput({ runId: "run-resume-fallback", findingsCount: 0 }) };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "1", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "codex" && Array.isArray(args) && args[0] === "exec" && args[1] === "resume",
+      ),
+    ).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "codex" &&
+          Array.isArray(args) &&
+          args[0] === "exec" &&
+          args[1] === "--skip-git-repo-check",
+      ),
+    ).toBe(true);
   });
 });

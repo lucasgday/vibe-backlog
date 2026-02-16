@@ -1,5 +1,6 @@
 import { execa } from "execa";
 import { z } from "zod";
+import type { ReviewAgentExecutionPlan } from "./review-provider";
 
 type ExecaFn = typeof execa;
 
@@ -93,34 +94,254 @@ export type ReviewAgentInput = {
 
 export type RunReviewAgentParams = {
   execaFn: ExecaFn;
-  command: string;
+  plan: ReviewAgentExecutionPlan;
   input: ReviewAgentInput;
 };
 
-export async function runReviewAgent(params: RunReviewAgentParams): Promise<ReviewAgentOutput> {
-  const command = params.command.trim();
-  if (!command) {
-    throw new Error("review agent command is required");
-  }
+export type RunReviewAgentResult = {
+  output: ReviewAgentOutput;
+  resumeAttempted: boolean;
+  resumeFallback: boolean;
+  runner: "command" | "codex" | "claude" | "gemini";
+};
 
-  const response = await params.execaFn("zsh", ["-lc", command], {
-    stdio: "pipe",
-    input: `${JSON.stringify(params.input)}\n`,
-  });
+type ProviderExecutionPlan = Exclude<ReviewAgentExecutionPlan, { mode: "command" }>;
+type CodexExecutionPlan = ProviderExecutionPlan & { provider: "codex" };
+type ClaudeOrGeminiExecutionPlan = ProviderExecutionPlan & { provider: "claude" | "gemini" };
 
-  let parsedJson: unknown;
+function buildProviderPrompt(input: ReviewAgentInput): string {
+  const instructions = [
+    "You are a code review pass runner.",
+    "Return ONLY a JSON object (no markdown) matching this schema:",
+    '{"version":1,"run_id":"string","passes":[{"name":"implementation|security|quality|ux|ops","summary":"string","findings":[{"id":"string","pass":"implementation|security|quality|ux|ops","severity":"P0|P1|P2|P3","title":"string","body":"string","file":"string|null","line":1,"kind":"defect|regression|security|improvement|docs|refactor|test|null"}]}],"autofix":{"applied":true,"summary":"string|null","changed_files":["string"]}}',
+    "",
+    "Review context JSON:",
+    JSON.stringify(input, null, 2),
+  ];
+  return instructions.join("\n");
+}
+
+function parseJsonCandidate(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
   try {
-    parsedJson = JSON.parse(response.stdout);
-  } catch (error) {
-    throw new Error(`review agent output is not valid JSON: ${String(error)}`);
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function collectJsonCandidates(raw: string): unknown[] {
+  const candidates: unknown[] = [];
+  const whole = parseJsonCandidate(raw);
+  if (whole !== null) {
+    candidates.push(whole);
   }
 
-  const parsed = ReviewAgentOutputSchema.safeParse(parsedJson);
-  if (!parsed.success) {
-    throw new Error(`review agent output schema mismatch: ${parsed.error.message}`);
+  for (const line of raw.split(/\r?\n/)) {
+    const parsed = parseJsonCandidate(line);
+    if (parsed !== null) {
+      candidates.push(parsed);
+    }
   }
 
-  return parsed.data;
+  const codeBlockRegex = /```json\s*([\s\S]*?)```/gi;
+  let blockMatch: RegExpExecArray | null = codeBlockRegex.exec(raw);
+  while (blockMatch) {
+    const parsed = parseJsonCandidate(blockMatch[1] ?? "");
+    if (parsed !== null) {
+      candidates.push(parsed);
+    }
+    blockMatch = codeBlockRegex.exec(raw);
+  }
+
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const objectChunk = raw.slice(firstBrace, lastBrace + 1);
+    const parsed = parseJsonCandidate(objectChunk);
+    if (parsed !== null) {
+      candidates.push(parsed);
+    }
+  }
+
+  return candidates;
+}
+
+function collectNestedValues(value: unknown): unknown[] {
+  const nested: unknown[] = [];
+  if (typeof value === "string") {
+    const parsed = parseJsonCandidate(value);
+    if (parsed !== null) {
+      nested.push(parsed);
+    }
+    return nested;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      nested.push(entry, ...collectNestedValues(entry));
+    }
+    return nested;
+  }
+
+  if (typeof value === "object" && value !== null) {
+    for (const entry of Object.values(value)) {
+      nested.push(entry, ...collectNestedValues(entry));
+    }
+  }
+  return nested;
+}
+
+function parseReviewAgentOutputFromText(raw: string): ReviewAgentOutput {
+  const candidates = collectJsonCandidates(raw);
+  for (const candidate of candidates) {
+    const direct = ReviewAgentOutputSchema.safeParse(candidate);
+    if (direct.success) {
+      return direct.data;
+    }
+
+    for (const nested of collectNestedValues(candidate)) {
+      const parsed = ReviewAgentOutputSchema.safeParse(nested);
+      if (parsed.success) {
+        return parsed.data;
+      }
+    }
+  }
+
+  const snippet = raw.trim().slice(0, 500);
+  throw new Error(`review agent output schema mismatch. Sample output: ${snippet}`);
+}
+
+async function runShellCommand(execaFn: ExecaFn, command: string, input: string): Promise<string> {
+  const response = await execaFn("zsh", ["-lc", command], {
+    stdio: "pipe",
+    input,
+  });
+  return response.stdout;
+}
+
+async function runCodexProvider(params: {
+  execaFn: ExecaFn;
+  plan: CodexExecutionPlan;
+  prompt: string;
+}): Promise<{ stdout: string; resumeAttempted: boolean; resumeFallback: boolean }> {
+  const { execaFn, plan, prompt } = params;
+
+  if (plan.providerCommandOverride) {
+    const stdout = await runShellCommand(execaFn, plan.providerCommandOverride, prompt);
+    return {
+      stdout,
+      resumeAttempted: false,
+      resumeFallback: false,
+    };
+  }
+
+  const binary = plan.providerBinary ?? "codex";
+
+  if (plan.resumeThreadId) {
+    const resumed = await execaFn(binary, ["exec", "resume", plan.resumeThreadId, "-"], {
+      stdio: "pipe",
+      input: prompt,
+      reject: false,
+    });
+
+    const resumedExitCode = typeof resumed.exitCode === "number" ? resumed.exitCode : 1;
+    if (resumedExitCode === 0) {
+      try {
+        parseReviewAgentOutputFromText(resumed.stdout);
+        return {
+          stdout: resumed.stdout,
+          resumeAttempted: true,
+          resumeFallback: false,
+        };
+      } catch {
+        // Fall through to regular codex execution.
+      }
+    }
+
+    const fallback = await execaFn(binary, ["exec", "--skip-git-repo-check", "-"], {
+      stdio: "pipe",
+      input: prompt,
+    });
+    return {
+      stdout: fallback.stdout,
+      resumeAttempted: true,
+      resumeFallback: true,
+    };
+  }
+
+  const standard = await execaFn(binary, ["exec", "--skip-git-repo-check", "-"], {
+    stdio: "pipe",
+    input: prompt,
+  });
+  return {
+    stdout: standard.stdout,
+    resumeAttempted: false,
+    resumeFallback: false,
+  };
+}
+
+async function runClaudeOrGeminiProvider(params: {
+  execaFn: ExecaFn;
+  plan: ClaudeOrGeminiExecutionPlan;
+  prompt: string;
+}): Promise<string> {
+  const { execaFn, plan, prompt } = params;
+  if (plan.providerCommandOverride) {
+    return runShellCommand(execaFn, plan.providerCommandOverride, prompt);
+  }
+
+  const binary = plan.providerBinary ?? plan.provider;
+  const response = await execaFn(binary, ["-p", prompt], { stdio: "pipe" });
+  return response.stdout;
+}
+
+export async function runReviewAgent(params: RunReviewAgentParams): Promise<RunReviewAgentResult> {
+  if (params.plan.mode === "command") {
+    const command = params.plan.command.trim();
+    if (!command) {
+      throw new Error("review agent command is required");
+    }
+    const stdout = await runShellCommand(params.execaFn, command, `${JSON.stringify(params.input)}\n`);
+    return {
+      output: parseReviewAgentOutputFromText(stdout),
+      resumeAttempted: false,
+      resumeFallback: false,
+      runner: "command",
+    };
+  }
+
+  const prompt = buildProviderPrompt(params.input);
+  if (params.plan.provider === "codex") {
+    const result = await runCodexProvider({
+      execaFn: params.execaFn,
+      plan: params.plan as CodexExecutionPlan,
+      prompt,
+    });
+    return {
+      output: parseReviewAgentOutputFromText(result.stdout),
+      resumeAttempted: result.resumeAttempted,
+      resumeFallback: result.resumeFallback,
+      runner: "codex",
+    };
+  }
+
+  if (params.plan.provider === "claude" || params.plan.provider === "gemini") {
+    const stdout = await runClaudeOrGeminiProvider({
+      execaFn: params.execaFn,
+      plan: params.plan as ClaudeOrGeminiExecutionPlan,
+      prompt,
+    });
+    return {
+      output: parseReviewAgentOutputFromText(stdout),
+      resumeAttempted: false,
+      resumeFallback: false,
+      runner: params.plan.provider,
+    };
+  }
+
+  throw new Error(`review agent provider not implemented: ${String((params.plan as { provider?: unknown }).provider)}`);
 }
 
 export function flattenReviewFindings(output: ReviewAgentOutput): ReviewFinding[] {

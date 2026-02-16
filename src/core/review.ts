@@ -9,6 +9,7 @@ import {
   type ReviewFinding,
   type ReviewPassResult,
 } from "./review-agent";
+import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from "./review-provider";
 import {
   buildReviewSummaryBody,
   createReviewFollowUpIssue,
@@ -31,6 +32,7 @@ type ExecaFn = typeof execa;
 export type ReviewCommandOptions = {
   issueOverride?: string | number | null;
   agentCmd?: string | null;
+  agentProvider?: string | null;
   dryRun: boolean;
   autofix: boolean;
   autopush: boolean;
@@ -52,6 +54,11 @@ export type ReviewCommandResult = {
   followUp: FollowUpIssue | null;
   runId: string | null;
   committed: boolean;
+  provider: "command" | "codex" | "claude" | "gemini";
+  providerSource: "flag" | "env" | "runtime" | "host" | "bin";
+  resumeAttempted: boolean;
+  resumeFallback: boolean;
+  providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
 };
 
 type ReviewRunContext = {
@@ -167,17 +174,27 @@ function buildOutcomeSummaryMarkdown(params: {
   output: ReviewAgentOutput;
   unresolvedFindings: ReviewFinding[];
   followUp: FollowUpIssue | null;
+  provider: "command" | "codex" | "claude" | "gemini";
+  providerSource: "flag" | "env" | "runtime" | "host" | "bin";
+  resumeAttempted: boolean;
+  resumeFallback: boolean;
+  providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
 }): string {
   const severity = summarizeSeverity(params.unresolvedFindings);
   const lines = [
     "## vibe review",
     `- Issue: #${params.issueId} ${params.issueTitle}`,
     `- PR: ${params.prNumber ? `#${params.prNumber}` : "-"}`,
+    `- Agent provider: ${params.provider} (source: ${params.providerSource})`,
+    `- Resume: attempted=${params.resumeAttempted ? "yes" : "no"}, fallback=${params.resumeFallback ? "yes" : "no"}`,
     `- Run ID: ${params.output.run_id}`,
     `- Attempts: ${params.attemptsUsed}/${params.maxAttempts}`,
     `- Unresolved findings: ${params.unresolvedFindings.length}`,
     `- Severity: P0=${severity.P0}, P1=${severity.P1}, P2=${severity.P2}, P3=${severity.P3}`,
   ];
+  if (params.providerHealedFromRuntime) {
+    lines.push(`- Provider auto-heal: ${params.providerHealedFromRuntime} -> ${params.provider}`);
+  }
 
   if (params.followUp?.url) {
     lines.push(`- Follow-up issue: ${params.followUp.url} (${params.followUp.label})`);
@@ -256,13 +273,6 @@ async function commitAndPushChanges(execaFn: ExecaFn, runId: string): Promise<bo
   return true;
 }
 
-function resolveAgentCommand(commandOption: string | null | undefined): string | null {
-  const direct = commandOption?.trim();
-  if (direct) return direct;
-  const envValue = process.env.VIBE_REVIEW_AGENT_CMD?.trim();
-  return envValue || null;
-}
-
 export async function runReviewCommand(
   options: ReviewCommandOptions,
   execaFn: ExecaFn = execa,
@@ -270,16 +280,21 @@ export async function runReviewCommand(
   const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
 
   const context = await resolveReviewRunContext(execaFn, options.issueOverride);
-  const agentCommand = resolveAgentCommand(options.agentCmd);
-  if (!agentCommand) {
-    throw new Error("review: missing review agent command. Set VIBE_REVIEW_AGENT_CMD or use --agent-cmd.");
-  }
 
   if (!options.dryRun) {
     const clean = await isWorkingTreeClean(execaFn);
     if (!clean) {
       throw new Error("review: working tree is not clean. Commit/stash changes or use --dry-run.");
     }
+  }
+
+  const executionPlan = await resolveReviewAgentExecutionPlan({
+    execaFn,
+    agentCmdOption: options.agentCmd,
+    agentProviderOption: options.agentProvider,
+  });
+  if (!options.dryRun) {
+    await persistReviewProviderSelection(executionPlan);
   }
 
   const issue = await fetchIssueSnapshot(execaFn, context.issueId);
@@ -297,13 +312,17 @@ export async function runReviewCommand(
 
   let finalOutput: ReviewAgentOutput | null = null;
   let attemptsUsed = 0;
+  let resumeAttempted = false;
+  let resumeFallback = false;
+  let providerRunner: "command" | "codex" | "claude" | "gemini" =
+    executionPlan.mode === "command" ? "command" : executionPlan.provider;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attemptsUsed = attempt;
 
-    const output = await runReviewAgent({
+    const run = await runReviewAgent({
       execaFn,
-      command: agentCommand,
+      plan: executionPlan,
       input: {
         version: 1,
         workspace_root: process.cwd(),
@@ -326,7 +345,11 @@ export async function runReviewCommand(
       },
     });
 
+    const output = run.output;
     finalOutput = output;
+    providerRunner = run.runner;
+    resumeAttempted = resumeAttempted || run.resumeAttempted;
+    resumeFallback = resumeFallback || run.resumeFallback;
     for (const pass of output.passes) {
       await appendPassRunLog({
         issueId: context.issueId,
@@ -361,6 +384,11 @@ export async function runReviewCommand(
     output: finalOutput,
     unresolvedFindings,
     followUp: null,
+    provider: providerRunner,
+    providerSource: executionPlan.source,
+    resumeAttempted,
+    resumeFallback,
+    providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
   });
 
   if (unresolvedFindings.length > 0) {
@@ -385,6 +413,11 @@ export async function runReviewCommand(
     output: finalOutput,
     unresolvedFindings,
     followUp,
+    provider: providerRunner,
+    providerSource: executionPlan.source,
+    resumeAttempted,
+    resumeFallback,
+    providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
   });
 
   let committed = false;
@@ -428,5 +461,10 @@ export async function runReviewCommand(
     followUp,
     runId: finalOutput.run_id,
     committed,
+    provider: providerRunner,
+    providerSource: executionPlan.source,
+    resumeAttempted,
+    resumeFallback,
+    providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
   };
 }

@@ -6,6 +6,7 @@ export * from "./tracker";
 export * from "./init";
 export * from "./reviews";
 export * from "./review-agent";
+export * from "./review-provider";
 export * from "./review-pr";
 export * from "./review-postflight";
 export * from "./review";
