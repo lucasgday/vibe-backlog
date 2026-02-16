@@ -7,9 +7,11 @@ import {
   normalizeGitHubIssueId,
   PostflightSchemaV1,
 } from "./core/postflight";
-import { buildTurnBranch, clearTurnContext, readTurnContext, writeTurnContext } from "./core/turn";
+import { buildTurnBranch, clearTurnContext, readTurnContext, validateTurnContext, writeTurnContext } from "./core/turn";
 
 type ExecaFn = typeof execa;
+const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
+const GUARD_INVALID_TURN_EXIT_CODE = 3;
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
@@ -170,6 +172,37 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         console.log("turn ended");
       } catch (error) {
         console.error("turn end: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("guard")
+    .description("Fail when there is no valid active turn context")
+    .action(async () => {
+      try {
+        const activeTurn = await readTurnContext();
+        if (!activeTurn) {
+          console.error("guard: no active turn.");
+          console.error("Run: node dist/cli.cjs turn start --issue <n>");
+          process.exitCode = GUARD_NO_ACTIVE_TURN_EXIT_CODE;
+          return;
+        }
+
+        const turnErrors = validateTurnContext(activeTurn);
+        if (turnErrors.length > 0) {
+          console.error(`guard: invalid active turn (missing/invalid: ${turnErrors.join(", ")}).`);
+          console.error("Run: node dist/cli.cjs turn start --issue <n>");
+          process.exitCode = GUARD_INVALID_TURN_EXIT_CODE;
+          return;
+        }
+
+        console.log(
+          `guard: OK issue=${activeTurn.issue_id} branch=${activeTurn.branch} base_branch=${activeTurn.base_branch}`,
+        );
+      } catch (error) {
+        console.error("guard: ERROR");
         console.error(error);
         process.exitCode = 1;
       }

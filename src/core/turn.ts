@@ -35,6 +35,28 @@ export function buildTurnBranch(issueId: number, slugSource: string): string {
   return `issue-${issueId}-${slug}`;
 }
 
+export function validateTurnContext(turn: Partial<TurnContext> | null): string[] {
+  const errors: string[] = [];
+
+  if (!turn) {
+    return ["turn context is missing"];
+  }
+
+  if (!Number.isSafeInteger(turn.issue_id) || (turn.issue_id ?? 0) <= 0) {
+    errors.push("issue_id");
+  }
+
+  if (typeof turn.branch !== "string" || !turn.branch.trim()) {
+    errors.push("branch");
+  }
+
+  if (typeof turn.base_branch !== "string" || !turn.base_branch.trim()) {
+    errors.push("base_branch");
+  }
+
+  return errors;
+}
+
 export async function readTurnContext(options: TurnContextOptions = {}): Promise<TurnContext | null> {
   const filePath = getTurnContextPath(options);
 
