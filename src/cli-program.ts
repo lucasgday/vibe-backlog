@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { execa } from "execa";
+import { scaffoldVibeInit } from "./core/init";
 import {
   appendIssueAutocloseReference,
   buildTrackerCommands,
@@ -23,6 +24,14 @@ const GH_API_PAGE_SIZE = 100;
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
+}
+
+function printPathList(title: string, paths: string[]): void {
+  if (!paths.length) return;
+  console.log(`\n${title}:`);
+  for (const entry of paths) {
+    console.log(`- ${entry}`);
+  }
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -81,6 +90,71 @@ async function listExistingLabelNames(execaFn: ExecaFn, repo: string): Promise<S
     .map((name) => name.trim())
     .filter(Boolean);
   return new Set(names);
+}
+
+async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<void> {
+  const repo = await resolveRepoNameWithOwner(execaFn);
+  const [existingMilestones, existingLabels] = await Promise.all([
+    listExistingMilestoneTitles(execaFn, repo),
+    listExistingLabelNames(execaFn, repo),
+  ]);
+  const milestonesToCreate = selectMissingTrackerMilestones(existingMilestones);
+  const labelsToCreate = selectMissingTrackerLabels(existingLabels);
+
+  console.log(`tracker bootstrap: repo ${repo}`);
+  if (!milestonesToCreate.length && !labelsToCreate.length) {
+    console.log("tracker bootstrap: already configured.");
+    if (!dryRun) {
+      const markerPath = await writeTrackerBootstrapMarker(repo);
+      console.log(`tracker bootstrap: marker updated at ${markerPath}`);
+    }
+    return;
+  }
+
+  if (milestonesToCreate.length > 0) {
+    console.log("\nMilestones to create:");
+    for (const milestone of milestonesToCreate) {
+      console.log(`- ${milestone.title}`);
+      const args = [
+        "api",
+        "--method",
+        "POST",
+        `repos/${repo}/milestones`,
+        "-f",
+        `title=${milestone.title}`,
+        "-f",
+        `description=${milestone.description}`,
+      ];
+      printGhCommand(args);
+      if (!dryRun) {
+        await execaFn("gh", args, { stdio: "inherit" });
+      }
+    }
+  } else {
+    console.log("Milestones: already configured.");
+  }
+
+  if (labelsToCreate.length > 0) {
+    console.log("\nLabels to create:");
+    for (const label of labelsToCreate) {
+      console.log(`- ${label.name}`);
+      const args = ["label", "create", label.name, "--color", label.color, "--description", label.description];
+      printGhCommand(args);
+      if (!dryRun) {
+        await execaFn("gh", args, { stdio: "inherit" });
+      }
+    }
+  } else {
+    console.log("Labels: already configured.");
+  }
+
+  if (dryRun) {
+    console.log("\ntracker bootstrap: dry-run complete.");
+    return;
+  }
+
+  const markerPath = await writeTrackerBootstrapMarker(repo);
+  console.log(`\ntracker bootstrap: DONE (${markerPath})`);
 }
 
 type PrBodySyncParams = {
@@ -291,70 +365,43 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       const dryRun = Boolean(opts.dryRun);
 
       try {
-        const repo = await resolveRepoNameWithOwner(execaFn);
-        const [existingMilestones, existingLabels] = await Promise.all([
-          listExistingMilestoneTitles(execaFn, repo),
-          listExistingLabelNames(execaFn, repo),
-        ]);
-        const milestonesToCreate = selectMissingTrackerMilestones(existingMilestones);
-        const labelsToCreate = selectMissingTrackerLabels(existingLabels);
+        await runTrackerBootstrap(execaFn, dryRun);
+      } catch (error) {
+        console.error("tracker bootstrap: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
 
-        console.log(`tracker bootstrap: repo ${repo}`);
-        if (!milestonesToCreate.length && !labelsToCreate.length) {
-          console.log("tracker bootstrap: already configured.");
-          if (!dryRun) {
-            const markerPath = await writeTrackerBootstrapMarker(repo);
-            console.log(`tracker bootstrap: marker updated at ${markerPath}`);
-          }
-          return;
-        }
+  program
+    .command("init")
+    .description("Initialize agent-first .vibe scaffolding in current repository")
+    .option("--dry-run", "Print planned changes without writing files", false)
+    .option("--skip-tracker", "Skip tracker bootstrap gh operations", false)
+    .action(async (opts) => {
+      const dryRun = Boolean(opts.dryRun);
+      const skipTracker = Boolean(opts.skipTracker);
 
-        if (milestonesToCreate.length > 0) {
-          console.log("\nMilestones to create:");
-          for (const milestone of milestonesToCreate) {
-            console.log(`- ${milestone.title}`);
-            const args = [
-              "api",
-              "--method",
-              "POST",
-              `repos/${repo}/milestones`,
-              "-f",
-              `title=${milestone.title}`,
-              "-f",
-              `description=${milestone.description}`,
-            ];
-            printGhCommand(args);
-            if (!dryRun) {
-              await execaFn("gh", args, { stdio: "inherit" });
-            }
-          }
+      try {
+        console.log(`init: ${dryRun ? "dry-run" : "apply"} mode`);
+        const scaffoldResult = await scaffoldVibeInit({ dryRun });
+        printPathList("Created", scaffoldResult.created);
+        printPathList("Updated", scaffoldResult.updated);
+
+        if (!skipTracker) {
+          console.log("\ninit: tracker bootstrap");
+          await runTrackerBootstrap(execaFn, dryRun);
         } else {
-          console.log("Milestones: already configured.");
-        }
-
-        if (labelsToCreate.length > 0) {
-          console.log("\nLabels to create:");
-          for (const label of labelsToCreate) {
-            console.log(`- ${label.name}`);
-            const args = ["label", "create", label.name, "--color", label.color, "--description", label.description];
-            printGhCommand(args);
-            if (!dryRun) {
-              await execaFn("gh", args, { stdio: "inherit" });
-            }
-          }
-        } else {
-          console.log("Labels: already configured.");
+          console.log("\ninit: tracker bootstrap skipped (--skip-tracker).");
         }
 
         if (dryRun) {
-          console.log("\ntracker bootstrap: dry-run complete.");
-          return;
+          console.log("\ninit: dry-run complete.");
+        } else {
+          console.log("\ninit: DONE");
         }
-
-        const markerPath = await writeTrackerBootstrapMarker(repo);
-        console.log(`\ntracker bootstrap: DONE (${markerPath})`);
       } catch (error) {
-        console.error("tracker bootstrap: ERROR");
+        console.error("init: ERROR");
         console.error(error);
         process.exitCode = 1;
       }
