@@ -10,6 +10,7 @@ import {
   getTurnContextPath,
   readTurnContext,
   slugifyTurnText,
+  validateTurnContext,
   writeTurnContext,
 } from "../src/core/turn";
 
@@ -72,5 +73,23 @@ describe.sequential("turn context", () => {
     expect(slugifyTurnText("  Add New API: v2 (MVP)!  ")).toBe("add-new-api-v2-mvp");
     expect(buildTurnBranch(2, "Fix auth flow")).toBe("issue-2-fix-auth-flow");
     expect(buildTurnBranch(2, "###")).toBe("issue-2-issue-2");
+  });
+
+  it("validates required turn context fields", () => {
+    expect(
+      validateTurnContext({
+        issue_id: 2,
+        branch: "issue-2-turn-context",
+        base_branch: "main",
+      }),
+    ).toEqual([]);
+
+    expect(
+      validateTurnContext({
+        issue_id: 0,
+        branch: "",
+        base_branch: " ",
+      }),
+    ).toEqual(["issue_id", "branch", "base_branch"]);
   });
 });
