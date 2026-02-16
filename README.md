@@ -95,6 +95,7 @@ vibe init
 
 # 1) inspect repo + issue state
 vibe preflight
+vibe status
 
 # 2) set the real active issue id before apply
 # Edit .vibe/artifacts/postflight.json and replace:
@@ -113,6 +114,7 @@ vibe postflight --apply
 ```
 
 `preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
+`status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 
 ## Agent workflow (AGENTS.md)
 
@@ -132,6 +134,7 @@ Use these for deterministic execution:
 ```bash
 pnpm build
 node dist/cli.cjs preflight
+node dist/cli.cjs status
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run

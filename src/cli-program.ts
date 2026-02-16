@@ -36,12 +36,152 @@ function printPathList(title: string, paths: string[]): void {
 
 type JsonRecord = Record<string, unknown>;
 
+type IssueSnapshot = {
+  number: number;
+  title: string;
+  state: string | null;
+  labels: string[];
+  milestone: string | null;
+  updatedAt: string | null;
+  url: string | null;
+};
+
+type PullRequestSnapshot = {
+  number: number;
+  state: string | null;
+  title: string;
+  url: string | null;
+};
+
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   const parsed = JSON.parse(stdout) as unknown;
   if (!Array.isArray(parsed)) {
     throw new Error(`${context}: expected array response`);
   }
   return parsed.filter((value): value is JsonRecord => typeof value === "object" && value !== null);
+}
+
+function parseLabelNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === "object" && entry !== null) {
+        const name = (entry as Record<string, unknown>).name;
+        if (typeof name === "string") return name.trim();
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function parseIssueSnapshots(stdout: string, context: string): IssueSnapshot[] {
+  const rows = parseJsonArray(stdout, context);
+  const snapshots: IssueSnapshot[] = [];
+
+  for (const row of rows) {
+    const number = row.number;
+    const title = row.title;
+    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) continue;
+    if (typeof title !== "string" || !title.trim()) continue;
+
+    const milestoneRaw = row.milestone;
+    const milestone =
+      typeof milestoneRaw === "object" && milestoneRaw !== null && typeof milestoneRaw.title === "string"
+        ? milestoneRaw.title.trim() || null
+        : null;
+
+    const state = typeof row.state === "string" ? row.state.trim() || null : null;
+    const updatedAt = typeof row.updatedAt === "string" ? row.updatedAt.trim() || null : null;
+    const url = typeof row.url === "string" ? row.url.trim() || null : null;
+
+    snapshots.push({
+      number,
+      title: title.trim(),
+      state,
+      labels: parseLabelNames(row.labels),
+      milestone,
+      updatedAt,
+      url,
+    });
+  }
+
+  return snapshots;
+}
+
+function parsePullRequestSnapshots(stdout: string, context: string): PullRequestSnapshot[] {
+  const rows = parseJsonArray(stdout, context);
+  const snapshots: PullRequestSnapshot[] = [];
+
+  for (const row of rows) {
+    const number = row.number;
+    const title = row.title;
+    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) continue;
+    if (typeof title !== "string" || !title.trim()) continue;
+
+    const state = typeof row.state === "string" ? row.state.trim() || null : null;
+    const url = typeof row.url === "string" ? row.url.trim() || null : null;
+
+    snapshots.push({
+      number,
+      title: title.trim(),
+      state,
+      url,
+    });
+  }
+
+  return snapshots;
+}
+
+function formatIssueSnapshot(snapshot: IssueSnapshot): string {
+  const labels = snapshot.labels.length ? snapshot.labels.join(", ") : "-";
+  const state = snapshot.state ?? "OPEN";
+  const updatedAt = snapshot.updatedAt ?? "-";
+  return `${snapshot.number}\t${state}\t${snapshot.title}\t${labels}\t${updatedAt}`;
+}
+
+function findInProgressIssues(snapshots: IssueSnapshot[]): IssueSnapshot[] {
+  return snapshots.filter((issue) => issue.labels.some((label) => label.trim().toLowerCase() === "status:in-progress"));
+}
+
+function findIssuesMissingMilestone(snapshots: IssueSnapshot[]): IssueSnapshot[] {
+  return snapshots.filter((issue) => !issue.milestone);
+}
+
+function findIssuesMissingModuleLabel(snapshots: IssueSnapshot[]): IssueSnapshot[] {
+  return snapshots.filter((issue) => !issue.labels.some((label) => label.trim().toLowerCase().startsWith("module:")));
+}
+
+function printIssueBlock(title: string, snapshots: IssueSnapshot[], limit: number): void {
+  console.log(`\n${title}:`);
+  if (!snapshots.length) {
+    console.log("none");
+    return;
+  }
+
+  for (const snapshot of snapshots.slice(0, limit)) {
+    console.log(formatIssueSnapshot(snapshot));
+  }
+}
+
+function printHygieneWarnings(snapshots: IssueSnapshot[]): void {
+  const missingMilestone = findIssuesMissingMilestone(snapshots);
+  const missingModule = findIssuesMissingModuleLabel(snapshots);
+
+  console.log("\nTracker hygiene warnings:");
+  if (!missingMilestone.length && !missingModule.length) {
+    console.log("none");
+    return;
+  }
+
+  if (missingMilestone.length) {
+    const ids = missingMilestone.map((issue) => `#${issue.number}`).join(", ");
+    console.log(`missing milestone: ${ids}`);
+  }
+
+  if (missingModule.length) {
+    const ids = missingModule.map((issue) => `#${issue.number}`).join(", ");
+    console.log(`missing module label: ${ids}`);
+  }
 }
 
 async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
@@ -90,6 +230,40 @@ async function listExistingLabelNames(execaFn: ExecaFn, repo: string): Promise<S
     .map((name) => name.trim())
     .filter(Boolean);
   return new Set(names);
+}
+
+async function listOpenIssueSnapshots(execaFn: ExecaFn, limit: number): Promise<IssueSnapshot[]> {
+  const response = await execaFn(
+    "gh",
+    ["issue", "list", "--state", "open", "-L", String(limit), "--json", "number,title,state,labels,milestone,updatedAt,url"],
+    { stdio: "pipe" },
+  );
+  return parseIssueSnapshots(response.stdout, "gh issue list");
+}
+
+async function fetchIssueSnapshotByNumber(execaFn: ExecaFn, issueId: number): Promise<IssueSnapshot | null> {
+  const response = await execaFn(
+    "gh",
+    ["issue", "view", String(issueId), "--json", "number,title,state,labels,milestone,updatedAt,url"],
+    {
+      stdio: "pipe",
+    },
+  );
+  const parsed = parseIssueSnapshots(`[${response.stdout}]`, "gh issue view");
+  return parsed[0] ?? null;
+}
+
+async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string): Promise<PullRequestSnapshot[]> {
+  const response = await execaFn("gh", ["pr", "list", "--head", branch, "--state", "all", "--json", "number,title,state,url"], {
+    stdio: "pipe",
+  });
+  return parsePullRequestSnapshots(response.stdout, "gh pr list");
+}
+
+function parseCurrentBranchFromStatus(statusOutput: string): string | null {
+  const firstLine = statusOutput.split(/\r?\n/)[0]?.trim() ?? "";
+  const match = /^##\s+([^\s.]+)/.exec(firstLine);
+  return match?.[1] ?? null;
 }
 
 async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<void> {
@@ -408,6 +582,94 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     });
 
   program
+    .command("status")
+    .description("Show active turn + tracker snapshot")
+    .action(async () => {
+      let gitStatusOutput = "";
+      let currentBranch: string | null = null;
+
+      try {
+        const git = await execaFn("git", ["status", "-sb"], { stdio: "pipe" });
+        gitStatusOutput = git.stdout;
+        console.log(gitStatusOutput);
+        currentBranch = parseCurrentBranchFromStatus(gitStatusOutput);
+      } catch {
+        console.log("git status: (not available)");
+      }
+
+      let activeTurnIssueId: number | null = null;
+      try {
+        const activeTurn = await readTurnContext();
+        if (!activeTurn) {
+          console.log("\nActive turn: none");
+        } else {
+          const errors = validateTurnContext(activeTurn);
+          if (errors.length) {
+            console.log(`\nActive turn: invalid (${errors.join(", ")})`);
+          } else {
+            activeTurnIssueId = activeTurn.issue_id;
+            console.log(
+              `\nActive turn: issue=${activeTurn.issue_id} branch=${activeTurn.branch} started_at=${activeTurn.started_at ?? "-"}`,
+            );
+          }
+        }
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          console.log("\nActive turn: invalid (malformed turn.json)");
+        } else {
+          console.log("\nActive turn: unavailable");
+        }
+      }
+
+      let openIssues: IssueSnapshot[] = [];
+      let ghAvailable = false;
+      try {
+        openIssues = await listOpenIssueSnapshots(execaFn, 100);
+        ghAvailable = true;
+      } catch (error) {
+        console.log("\nTracker snapshot: unavailable (gh issue list failed)");
+        if (error instanceof Error) {
+          console.log(String(error.message || error));
+        }
+      }
+
+      if (ghAvailable) {
+        printIssueBlock("In-progress issues", findInProgressIssues(openIssues), 10);
+        printHygieneWarnings(openIssues);
+      }
+
+      if (ghAvailable && activeTurnIssueId) {
+        try {
+          const issue = await fetchIssueSnapshotByNumber(execaFn, activeTurnIssueId);
+          if (issue) {
+            const labels = issue.labels.length ? issue.labels.join(", ") : "-";
+            console.log(`\nActive issue: #${issue.number} ${issue.state ?? "OPEN"} ${issue.title}`);
+            console.log(`Active issue labels: ${labels}`);
+            console.log(`Active issue milestone: ${issue.milestone ?? "-"}`);
+          }
+        } catch {
+          console.log("\nActive issue: unavailable from gh");
+        }
+      }
+
+      if (ghAvailable && currentBranch) {
+        try {
+          const prs = await listBranchPullRequestSnapshots(execaFn, currentBranch);
+          console.log("\nBranch PRs:");
+          if (!prs.length) {
+            console.log("none");
+          } else {
+            for (const pr of prs) {
+              console.log(`#${pr.number} ${pr.state ?? "-"} ${pr.title}${pr.url ? ` (${pr.url})` : ""}`);
+            }
+          }
+        } catch {
+          console.log("\nBranch PRs: unavailable");
+        }
+      }
+    });
+
+  program
     .command("preflight")
     .description("Show git + GitHub issue snapshot")
     .action(async () => {
@@ -418,13 +680,20 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         console.log("git status: (not available)");
       }
 
+      let snapshots: IssueSnapshot[] = [];
+      let ghIssueQueryOk = false;
       try {
-        const issues = await execaFn("gh", ["issue", "list", "-L", "10"], { stdio: "pipe" });
-        console.log("\nOpen issues (top 10):");
-        console.log(issues.stdout);
+        snapshots = await listOpenIssueSnapshots(execaFn, 100);
+        ghIssueQueryOk = true;
+        printIssueBlock("Open issues (top 10)", snapshots, 10);
       } catch (e) {
         console.log("\nOpen issues: (gh issue list not available here)");
         if (e instanceof Error) console.log(String(e.message || e));
+      }
+
+      if (ghIssueQueryOk) {
+        printIssueBlock("In-progress issues", findInProgressIssues(snapshots), 10);
+        printHygieneWarnings(snapshots);
       }
 
       try {
