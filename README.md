@@ -96,6 +96,7 @@ vibe init
 # 1) inspect repo + issue state
 vibe preflight
 vibe status
+vibe review --dry-run
 
 # 2) set the real active issue id before apply
 # Edit .vibe/artifacts/postflight.json and replace:
@@ -116,6 +117,7 @@ vibe postflight --apply
 `preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
+`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create follow-up issues when unresolved findings remain.
 
 ## Agent workflow (AGENTS.md)
 
@@ -136,6 +138,7 @@ Use these for deterministic execution:
 pnpm build
 node dist/cli.cjs preflight
 node dist/cli.cjs status
+node dist/cli.cjs review --dry-run --agent-cmd "<your-review-agent-command>"
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
@@ -144,3 +147,21 @@ node dist/cli.cjs postflight
 node dist/cli.cjs postflight --apply --dry-run
 node dist/cli.cjs postflight --apply
 ```
+
+## `vibe review` command reference
+
+```bash
+vibe review [options]
+```
+
+Options:
+
+- `--issue <n>`: issue override (defaults to active turn issue).
+- `--agent-cmd "<cmd>"`: external agent command. Fallback: `VIBE_REVIEW_AGENT_CMD`.
+- `--dry-run`: run planning path without mutating git/GitHub.
+- `--no-autofix`: disable agent autofix mode.
+- `--no-autopush`: disable final auto commit/push.
+- `--no-publish`: skip PR summary/review/inline publication.
+- `--max-attempts <n>`: max retry attempts (default `5`).
+- `--strict`: exit non-zero when unresolved findings remain after final attempt.
+- `--followup-label bug|enhancement`: override follow-up issue label.
