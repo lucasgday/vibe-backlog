@@ -118,6 +118,7 @@ vibe postflight --apply
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create follow-up issues when unresolved findings remain.
+`pr open` creates/reuses an open PR for the issue and injects deterministic architecture/rationale sections plus `Fixes #<issue>`.
 
 ## Agent workflow (AGENTS.md)
 
@@ -139,6 +140,7 @@ pnpm build
 node dist/cli.cjs preflight
 node dist/cli.cjs status
 node dist/cli.cjs review --dry-run
+node dist/cli.cjs pr open --dry-run --issue <n> --branch <name>
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
