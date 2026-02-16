@@ -114,6 +114,8 @@ EOF
 
 # now these commands are valid
 vibe preflight
+vibe tracker bootstrap --dry-run
+vibe tracker bootstrap
 vibe postflight
 vibe postflight --apply --dry-run
 ```
@@ -129,6 +131,10 @@ node /path/to/vibe-backlog/dist/cli.cjs preflight
 ```bash
 # 1) inspect repo + issue state
 vibe preflight
+
+# 1.1) one-time tracker taxonomy bootstrap (per repo)
+vibe tracker bootstrap --dry-run
+vibe tracker bootstrap
 
 # 2) create or update postflight artifact
 mkdir -p .vibe/artifacts
@@ -186,6 +192,8 @@ vibe postflight --apply --dry-run
 vibe postflight --apply
 ```
 
+`preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
+
 ## Agent workflow (AGENTS.md)
 
 This repo supports LLM-driven development. The file `AGENTS.md` is the agent contract:
@@ -204,6 +212,8 @@ Use these for deterministic execution:
 ```bash
 pnpm build
 node dist/cli.cjs preflight
+node dist/cli.cjs tracker bootstrap --dry-run
+node dist/cli.cjs tracker bootstrap
 node dist/cli.cjs postflight
 node dist/cli.cjs postflight --apply --dry-run
 node dist/cli.cjs postflight --apply

@@ -7,15 +7,80 @@ import {
   normalizeGitHubIssueId,
   PostflightSchemaV1,
 } from "./core/postflight";
+import {
+  selectMissingTrackerLabels,
+  selectMissingTrackerMilestones,
+  shouldSuggestTrackerBootstrap,
+  writeTrackerBootstrapMarker,
+} from "./core/tracker";
 import { buildTurnBranch, clearTurnContext, readTurnContext, validateTurnContext, writeTurnContext } from "./core/turn";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
 const GUARD_INVALID_TURN_EXIT_CODE = 3;
 const GUARD_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
+const GH_API_PAGE_SIZE = 100;
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function parseJsonArray(stdout: string, context: string): JsonRecord[] {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${context}: expected array response`);
+  }
+  return parsed.filter((value): value is JsonRecord => typeof value === "object" && value !== null);
+}
+
+async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
+  const repo = await execaFn("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
+    stdio: "pipe",
+  });
+  const slug = repo.stdout.trim();
+  if (!slug || !slug.includes("/")) {
+    throw new Error("unable to resolve repository owner/name from gh");
+  }
+  return slug;
+}
+
+async function listPaginatedGhApiRecords(execaFn: ExecaFn, endpoint: string, context: string): Promise<JsonRecord[]> {
+  const all: JsonRecord[] = [];
+
+  for (let page = 1; ; page += 1) {
+    const separator = endpoint.includes("?") ? "&" : "?";
+    const paginatedEndpoint = `${endpoint}${separator}per_page=${GH_API_PAGE_SIZE}&page=${page}`;
+    const response = await execaFn("gh", ["api", paginatedEndpoint], { stdio: "pipe" });
+    const parsed = parseJsonArray(response.stdout, context);
+    all.push(...parsed);
+    if (parsed.length < GH_API_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return all;
+}
+
+async function listExistingMilestoneTitles(execaFn: ExecaFn, repo: string): Promise<Set<string>> {
+  const parsed = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/milestones?state=all`, "gh milestones");
+  const titles = parsed
+    .map((row) => row.title)
+    .filter((value): value is string => typeof value === "string")
+    .map((title) => title.trim())
+    .filter(Boolean);
+  return new Set(titles);
+}
+
+async function listExistingLabelNames(execaFn: ExecaFn, repo: string): Promise<Set<string>> {
+  const parsed = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/labels`, "gh labels");
+  const names = parsed
+    .map((row) => row.name)
+    .filter((value): value is string => typeof value === "string")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return new Set(names);
 }
 
 type PrBodySyncParams = {
@@ -216,6 +281,85 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       }
     });
 
+  const tracker = program.command("tracker").description("Manage tracker bootstrap for current repository");
+
+  tracker
+    .command("bootstrap")
+    .description("Create default milestones + module labels in current GitHub repo")
+    .option("--dry-run", "Print gh commands without executing them", false)
+    .action(async (opts) => {
+      const dryRun = Boolean(opts.dryRun);
+
+      try {
+        const repo = await resolveRepoNameWithOwner(execaFn);
+        const [existingMilestones, existingLabels] = await Promise.all([
+          listExistingMilestoneTitles(execaFn, repo),
+          listExistingLabelNames(execaFn, repo),
+        ]);
+        const milestonesToCreate = selectMissingTrackerMilestones(existingMilestones);
+        const labelsToCreate = selectMissingTrackerLabels(existingLabels);
+
+        console.log(`tracker bootstrap: repo ${repo}`);
+        if (!milestonesToCreate.length && !labelsToCreate.length) {
+          console.log("tracker bootstrap: already configured.");
+          if (!dryRun) {
+            const markerPath = await writeTrackerBootstrapMarker(repo);
+            console.log(`tracker bootstrap: marker updated at ${markerPath}`);
+          }
+          return;
+        }
+
+        if (milestonesToCreate.length > 0) {
+          console.log("\nMilestones to create:");
+          for (const milestone of milestonesToCreate) {
+            console.log(`- ${milestone.title}`);
+            const args = [
+              "api",
+              "--method",
+              "POST",
+              `repos/${repo}/milestones`,
+              "-f",
+              `title=${milestone.title}`,
+              "-f",
+              `description=${milestone.description}`,
+            ];
+            printGhCommand(args);
+            if (!dryRun) {
+              await execaFn("gh", args, { stdio: "inherit" });
+            }
+          }
+        } else {
+          console.log("Milestones: already configured.");
+        }
+
+        if (labelsToCreate.length > 0) {
+          console.log("\nLabels to create:");
+          for (const label of labelsToCreate) {
+            console.log(`- ${label.name}`);
+            const args = ["label", "create", label.name, "--color", label.color, "--description", label.description];
+            printGhCommand(args);
+            if (!dryRun) {
+              await execaFn("gh", args, { stdio: "inherit" });
+            }
+          }
+        } else {
+          console.log("Labels: already configured.");
+        }
+
+        if (dryRun) {
+          console.log("\ntracker bootstrap: dry-run complete.");
+          return;
+        }
+
+        const markerPath = await writeTrackerBootstrapMarker(repo);
+        console.log(`\ntracker bootstrap: DONE (${markerPath})`);
+      } catch (error) {
+        console.error("tracker bootstrap: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
   program
     .command("preflight")
     .description("Show git + GitHub issue snapshot")
@@ -234,6 +378,18 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       } catch (e) {
         console.log("\nOpen issues: (gh issue list not available here)");
         if (e instanceof Error) console.log(String(e.message || e));
+      }
+
+      try {
+        const shouldHint = await shouldSuggestTrackerBootstrap();
+        if (shouldHint) {
+          console.log("\nTracker bootstrap suggested:");
+          console.log("Detected .vibe without tracker taxonomy marker.");
+          console.log("Run: node dist/cli.cjs tracker bootstrap --dry-run");
+          console.log("Then: node dist/cli.cjs tracker bootstrap");
+        }
+      } catch {
+        // Ignore hint failures: preflight must remain resilient.
       }
     });
 
