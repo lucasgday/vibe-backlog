@@ -38,6 +38,7 @@ export type FollowUpIssue = {
 };
 
 export type FollowUpLabelOverride = "bug" | "enhancement" | null;
+const FOLLOW_UP_OPTIONAL_LABELS = ["status:backlog", "module:cli", "module:tracker"] as const;
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   const parsed = JSON.parse(stdout) as unknown;
@@ -367,26 +368,31 @@ export async function publishReviewToPullRequest(params: PublishReviewParams): P
     }
 
     const body = buildInlineCommentBody(finding, fingerprint);
-    await execaFn(
-      "gh",
-      [
-        "api",
-        "--method",
-        "POST",
-        `repos/${repo}/pulls/${pr.number}/comments`,
-        "-f",
-        `body=${body}`,
-        "-f",
-        `commit_id=${headSha}`,
-        "-f",
-        `path=${file}`,
-        "-F",
-        `line=${line}`,
-      ],
-      { stdio: "pipe" },
-    );
-    fingerprints.add(fingerprint);
-    inlinePublished += 1;
+    try {
+      await execaFn(
+        "gh",
+        [
+          "api",
+          "--method",
+          "POST",
+          `repos/${repo}/pulls/${pr.number}/comments`,
+          "-f",
+          `body=${body}`,
+          "-f",
+          `commit_id=${headSha}`,
+          "-f",
+          `path=${file}`,
+          "-F",
+          `line=${line}`,
+        ],
+        { stdio: "pipe" },
+      );
+      fingerprints.add(fingerprint);
+      inlinePublished += 1;
+    } catch {
+      inlineSkipped += 1;
+      continue;
+    }
   }
 
   return {
@@ -441,6 +447,69 @@ function buildFollowUpIssueBody(sourceIssueId: number, findings: ReviewFinding[]
   return lines.join("\n");
 }
 
+function normalizeLabelName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+async function listRepositoryLabels(execaFn: ExecaFn): Promise<Set<string>> {
+  const listed = await execaFn("gh", ["label", "list", "--limit", "500", "--json", "name"], { stdio: "pipe" });
+  const rows = parseJsonArray(listed.stdout, "gh label list");
+  const labels = new Set<string>();
+  for (const row of rows) {
+    const name = parseNullableString(row.name);
+    if (!name) continue;
+    labels.add(normalizeLabelName(name));
+  }
+  return labels;
+}
+
+function pickExistingLabels(requested: string[], existing: Set<string>): string[] {
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  for (const label of requested) {
+    const normalized = normalizeLabelName(label);
+    if (!normalized || seen.has(normalized)) continue;
+    if (!existing.has(normalized)) continue;
+    seen.add(normalized);
+    picked.push(label);
+  }
+  return picked;
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) {
+    const execaError = error as Error & { stderr?: unknown; stdout?: unknown; shortMessage?: unknown };
+    const parts = [execaError.message];
+    if (typeof execaError.shortMessage === "string" && execaError.shortMessage.trim()) parts.push(execaError.shortMessage);
+    if (typeof execaError.stderr === "string" && execaError.stderr.trim()) parts.push(execaError.stderr);
+    if (typeof execaError.stdout === "string" && execaError.stdout.trim()) parts.push(execaError.stdout);
+    return parts.join("\n");
+  }
+  return String(error);
+}
+
+function isLikelyMissingLabelError(error: unknown): boolean {
+  const text = errorText(error).toLowerCase();
+  return text.includes("label") && (text.includes("not found") || text.includes("could not add") || text.includes("invalid"));
+}
+
+async function createIssueWithLabels(params: {
+  execaFn: ExecaFn;
+  title: string;
+  body: string;
+  labels: string[];
+  milestoneTitle: string | null;
+}) {
+  const args = ["issue", "create", "--title", params.title, "--body", params.body];
+  for (const label of params.labels) {
+    args.push("--label", label);
+  }
+  if (params.milestoneTitle) {
+    args.push("--milestone", params.milestoneTitle);
+  }
+  return params.execaFn("gh", args, { stdio: "pipe" });
+}
+
 type CreateFollowUpParams = {
   execaFn: ExecaFn;
   sourceIssueId: number;
@@ -467,13 +536,38 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
     };
   }
 
-  const args = ["issue", "create", "--title", title, "--body", body, "--label", label, "--label", "status:backlog"];
-  args.push("--label", "module:cli", "--label", "module:tracker");
-  if (milestoneTitle) {
-    args.push("--milestone", milestoneTitle);
+  const requestedLabels: string[] = [label, ...FOLLOW_UP_OPTIONAL_LABELS];
+  let labelsToApply: string[] = [...requestedLabels];
+  try {
+    const availableLabels = await listRepositoryLabels(execaFn);
+    labelsToApply = pickExistingLabels(requestedLabels, availableLabels);
+  } catch {
+    labelsToApply = requestedLabels;
   }
 
-  const created = await execaFn("gh", args, { stdio: "pipe" });
+  let created;
+  try {
+    created = await createIssueWithLabels({
+      execaFn,
+      title,
+      body,
+      labels: labelsToApply,
+      milestoneTitle,
+    });
+  } catch (error) {
+    if (!labelsToApply.length || !isLikelyMissingLabelError(error)) {
+      throw error;
+    }
+
+    created = await createIssueWithLabels({
+      execaFn,
+      title,
+      body,
+      labels: [],
+      milestoneTitle,
+    });
+  }
+
   const url = extractUrl(created.stdout);
   const number = extractIssueNumberFromUrl(url);
 

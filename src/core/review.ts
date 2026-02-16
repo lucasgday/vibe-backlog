@@ -288,6 +288,10 @@ export async function runReviewCommand(
     }
   }
 
+  if (!options.dryRun && options.autopush && context.branch === "main") {
+    throw new Error("review: autopush blocked on main branch.");
+  }
+
   const executionPlan = await resolveReviewAgentExecutionPlan({
     execaFn,
     agentCmdOption: options.agentCmd,
@@ -308,7 +312,9 @@ export async function runReviewCommand(
     dryRun: options.dryRun,
   });
 
-  await ensureIssueReviewTemplates(context.issueId);
+  if (!options.dryRun) {
+    await ensureIssueReviewTemplates(context.issueId);
+  }
 
   let finalOutput: ReviewAgentOutput | null = null;
   let attemptsUsed = 0;
@@ -350,16 +356,18 @@ export async function runReviewCommand(
     providerRunner = run.runner;
     resumeAttempted = resumeAttempted || run.resumeAttempted;
     resumeFallback = resumeFallback || run.resumeFallback;
-    for (const pass of output.passes) {
-      await appendPassRunLog({
-        issueId: context.issueId,
-        attempt,
-        maxAttempts,
-        pass,
-        runId: output.run_id,
-        autofixApplied: output.autofix.applied,
-        changedFiles: output.autofix.changed_files,
-      });
+    if (!options.dryRun) {
+      for (const pass of output.passes) {
+        await appendPassRunLog({
+          issueId: context.issueId,
+          attempt,
+          maxAttempts,
+          pass,
+          runId: output.run_id,
+          autofixApplied: output.autofix.applied,
+          changedFiles: output.autofix.changed_files,
+        });
+      }
     }
 
     const findings = flattenReviewFindings(output);
@@ -422,9 +430,6 @@ export async function runReviewCommand(
 
   let committed = false;
   if (!options.dryRun && options.autopush) {
-    if (context.branch === "main") {
-      throw new Error("review: autopush blocked on main branch.");
-    }
     committed = await commitAndPushChanges(execaFn, finalOutput.run_id);
   }
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -350,6 +350,7 @@ describe.sequential("cli review", () => {
           ((args[0] === "pr" && args[1] === "review") || (args[0] === "api" && args[1] === "--method")),
       ),
     ).toBe(false);
+    expect(existsSync(path.join(tempDir, ".vibe", "reviews"))).toBe(false);
   });
 
   it("blocks autopush on main branch", async () => {
@@ -384,6 +385,7 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBe(1);
     expect(errors.some((line) => line.includes("autopush blocked on main branch"))).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "gh")).toBe(false);
   });
 
   it("attempts codex resume first and falls back to standard codex exec", async () => {
