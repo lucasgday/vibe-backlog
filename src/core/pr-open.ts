@@ -337,7 +337,7 @@ export async function runPrOpenCommand(
       prNumber: openPr.number,
       prUrl: openPr.url,
       created: false,
-      dryRun: false,
+      dryRun: options.dryRun,
       title,
       body,
     };
@@ -362,7 +362,7 @@ export async function runPrOpenCommand(
     baseBranch,
     prNumber: created.number,
     prUrl: created.url,
-    created: true,
+    created: !options.dryRun,
     dryRun: options.dryRun,
     title: created.title,
     body: created.body,

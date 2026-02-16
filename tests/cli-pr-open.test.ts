@@ -190,4 +190,58 @@ describe.sequential("cli pr open", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("pr open: created #62 https://example.test/pull/62"))).toBe(true);
   });
+
+  it("keeps dry-run output path when branch already has an open PR", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 63,
+              title: "feat: add vibe pr open command",
+              url: "https://example.test/pull/63",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat: add vibe pr open command with issue linkage",
+            url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync([
+      "node",
+      "vibe",
+      "pr",
+      "open",
+      "--issue",
+      "6",
+      "--branch",
+      "feature/custom",
+      "--dry-run",
+    ]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("pr open: dry-run issue=#6 branch=feature/custom base=main"))).toBe(true);
+    expect(logs.some((line) => line.includes("body:"))).toBe(true);
+    expect(logs.some((line) => line.includes("pr open: already open"))).toBe(false);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",
+      ),
+    ).toBe(false);
+  });
 });
