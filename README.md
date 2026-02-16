@@ -115,6 +115,7 @@ vibe postflight --apply
 
 `preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
+`turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 
 ## Agent workflow (AGENTS.md)
 
