@@ -119,6 +119,7 @@ vibe postflight --apply
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create follow-up issues when unresolved findings remain.
 `pr open` creates/reuses an open PR for the issue and injects deterministic architecture/rationale sections plus `Fixes #<issue>`.
+`tracker reconcile` fills missing `module:*` labels and milestone metadata using repo-specific taxonomy/history, with interactive or flag-based fallbacks.
 
 ## Agent workflow (AGENTS.md)
 
@@ -145,10 +146,30 @@ node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
 node dist/cli.cjs tracker bootstrap
+node dist/cli.cjs tracker reconcile --dry-run
+node dist/cli.cjs tracker reconcile --fallback-module module:core --fallback-milestone "<milestone>"
 node dist/cli.cjs postflight
 node dist/cli.cjs postflight --apply --dry-run
 node dist/cli.cjs postflight --apply
 ```
+
+## `vibe tracker reconcile` command reference
+
+```bash
+vibe tracker reconcile [options]
+```
+
+Options:
+
+- `--dry-run`: build and print reconcile plan only.
+- `--fallback-module <name>`: module label/name to use when module inference is uncertain.
+- `--fallback-milestone <title>`: milestone title to use when milestone inference is uncertain.
+
+Behavior:
+
+- Default mode applies updates (`gh issue edit`) to open issues with missing `module:*` or milestone.
+- In non-interactive sessions, unresolved decisions degrade to plan-only and exit `0`.
+- Reconcile never removes/replaces existing module labels or milestone; it only fills missing metadata.
 
 ## `vibe review` command reference
 

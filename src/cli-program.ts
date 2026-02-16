@@ -9,9 +9,11 @@ import {
   PostflightSchemaV1,
 } from "./core/postflight";
 import {
+  runTrackerReconcile,
   selectMissingTrackerLabels,
   selectMissingTrackerMilestones,
   shouldSuggestTrackerBootstrap,
+  type TrackerReconcilePromptRequest,
   writeTrackerBootstrapMarker,
 } from "./core/tracker";
 import { buildTurnBranch, clearTurnContext, readTurnContext, validateTurnContext, writeTurnContext } from "./core/turn";
@@ -190,6 +192,24 @@ function printHygieneWarnings(snapshots: IssueSnapshot[]): void {
   if (missingModule.length) {
     const ids = missingModule.map((issue) => `#${issue.number}`).join(", ");
     console.log(`missing module label: ${ids}`);
+  }
+}
+
+async function promptTrackerReconcileValue(request: TrackerReconcilePromptRequest): Promise<string | null> {
+  const { createInterface } = await import("node:readline/promises");
+  const { stdin, stdout } = process;
+  const rl = createInterface({ input: stdin, output: stdout });
+
+  try {
+    const suggestionText = request.suggestions.length ? ` [suggestions: ${request.suggestions.join(", ")}]` : "";
+    const prompt =
+      request.kind === "module"
+        ? `tracker reconcile: issue #${request.issueNumber} missing module${suggestionText}. Enter module label: `
+        : `tracker reconcile: issue #${request.issueNumber} missing milestone${suggestionText}. Enter milestone title: `;
+    const answer = (await rl.question(prompt)).trim();
+    return answer || null;
+  } finally {
+    rl.close();
   }
 }
 
@@ -572,6 +592,80 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         await runTrackerBootstrap(execaFn, dryRun);
       } catch (error) {
         console.error("tracker bootstrap: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  tracker
+    .command("reconcile")
+    .description("Reconcile missing module:* labels and milestones for open issues")
+    .option("--dry-run", "Print planned gh commands without executing them", false)
+    .option("--fallback-module <name>", "Fallback module label/name when inference is uncertain")
+    .option("--fallback-milestone <title>", "Fallback milestone title when inference is uncertain")
+    .action(async (opts) => {
+      const dryRun = Boolean(opts.dryRun);
+      const fallbackModule = typeof opts.fallbackModule === "string" ? opts.fallbackModule : null;
+      const fallbackMilestone = typeof opts.fallbackMilestone === "string" ? opts.fallbackMilestone : null;
+
+      try {
+        const result = await runTrackerReconcile(
+          {
+            dryRun,
+            fallbackModule,
+            fallbackMilestone,
+          },
+          {
+            execaFn,
+            promptFn: promptTrackerReconcileValue,
+          },
+        );
+
+        console.log(`tracker reconcile: repo ${result.repo}`);
+
+        if (!result.issueUpdates.length) {
+          console.log("tracker reconcile: no issue updates planned.");
+        } else {
+          console.log(`tracker reconcile: planned issue updates=${result.issueUpdates.length}`);
+          for (const update of result.issueUpdates) {
+            const labels = update.addLabels.length ? update.addLabels.join(", ") : "-";
+            const milestone = update.setMilestone ?? "-";
+            console.log(`#${update.issueNumber} labels[${labels}] milestone[${milestone}]`);
+          }
+        }
+
+        if (result.unresolvedIssueIds.length) {
+          console.log(`tracker reconcile: unresolved issues=${result.unresolvedIssueIds.map((id) => `#${id}`).join(", ")}`);
+        }
+
+        if (result.commands.length) {
+          console.log("\nPlanned commands:");
+          for (const args of result.commands) {
+            printGhCommand(args);
+          }
+        }
+
+        if (result.degradedToPlanOnly) {
+          console.log("\ntracker reconcile: plan-only mode (no changes applied).");
+          if (result.planOnlyReason) {
+            console.log(result.planOnlyReason);
+          }
+          return;
+        }
+
+        if (result.dryRun) {
+          console.log("\ntracker reconcile: dry-run complete.");
+          return;
+        }
+
+        if (result.applied) {
+          console.log(`\ntracker reconcile: DONE (${result.issueUpdates.length} issue update(s))`);
+          return;
+        }
+
+        console.log("\ntracker reconcile: no changes applied.");
+      } catch (error) {
+        console.error("tracker reconcile: ERROR");
         console.error(error);
         process.exitCode = 1;
       }
