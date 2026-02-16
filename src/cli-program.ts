@@ -16,6 +16,13 @@ import {
 } from "./core/tracker";
 import { buildTurnBranch, clearTurnContext, readTurnContext, validateTurnContext, writeTurnContext } from "./core/turn";
 import { ensureIssueReviewTemplates } from "./core/reviews";
+import {
+  REVIEW_INVALID_TURN_EXIT_CODE,
+  REVIEW_NO_ACTIVE_TURN_EXIT_CODE,
+  REVIEW_REMEDIATION,
+  runReviewCommand,
+} from "./core/review";
+import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -688,6 +695,118 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         } catch {
           console.log("\nBranch PRs: unavailable");
         }
+      }
+    });
+
+  program
+    .command("review")
+    .description("Run role-based review passes and publish final report to PR")
+    .option("--issue <n>", "GitHub issue number override")
+    .option("--agent-provider <provider>", "Review agent provider (auto|codex|claude|gemini|command)", "auto")
+    .option("--agent-cmd <cmd>", "External review agent command (fallback: VIBE_REVIEW_AGENT_CMD)")
+    .option("--dry-run", "Plan review run without mutating git/GitHub", false)
+    .option("--no-autofix", "Disable autofix mode for the external review agent")
+    .option("--no-autopush", "Disable automatic git commit/push at the end")
+    .option("--no-publish", "Skip PR publication (summary/review/inline comments)")
+    .option("--max-attempts <n>", "Maximum review attempts before creating follow-up issue", "5")
+    .option("--strict", "Exit non-zero when unresolved findings remain after max attempts", false)
+    .option("--followup-label <label>", "Override follow-up issue label (bug|enhancement)")
+    .action(async (opts) => {
+      const followupLabelRaw = typeof opts.followupLabel === "string" ? opts.followupLabel.trim().toLowerCase() : "";
+      if (followupLabelRaw && followupLabelRaw !== "bug" && followupLabelRaw !== "enhancement") {
+        console.error("review: --followup-label must be one of: bug, enhancement");
+        process.exitCode = 1;
+        return;
+      }
+
+      const parsedMaxAttempts = Number(opts.maxAttempts);
+      if (!Number.isFinite(parsedMaxAttempts)) {
+        console.error("review: --max-attempts must be a number.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const providerRaw = typeof opts.agentProvider === "string" ? opts.agentProvider.trim().toLowerCase() : "auto";
+      if (!REVIEW_AGENT_PROVIDER_VALUES.includes(providerRaw as (typeof REVIEW_AGENT_PROVIDER_VALUES)[number])) {
+        console.error(`review: --agent-provider must be one of: ${REVIEW_AGENT_PROVIDER_VALUES.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        const result = await runReviewCommand(
+          {
+            issueOverride: opts.issue ?? null,
+            agentProvider: providerRaw,
+            agentCmd: opts.agentCmd ?? null,
+            dryRun: Boolean(opts.dryRun),
+            autofix: Boolean(opts.autofix),
+            autopush: Boolean(opts.autopush),
+            publish: Boolean(opts.publish),
+            maxAttempts: parsedMaxAttempts,
+            strict: Boolean(opts.strict),
+            followupLabel: followupLabelRaw ? (followupLabelRaw as "bug" | "enhancement") : null,
+          },
+          execaFn,
+        );
+
+        const issueText = result.issueId ? `#${result.issueId}` : "-";
+        const branchText = result.branch ?? "-";
+        console.log(`review: issue=${issueText} branch=${branchText}`);
+        console.log(`review: provider=${result.provider} source=${result.providerSource}`);
+        console.log(
+          `review: resume_attempted=${result.resumeAttempted ? "yes" : "no"} resume_fallback=${result.resumeFallback ? "yes" : "no"}`,
+        );
+        if (result.providerHealedFromRuntime) {
+          console.log(`review: provider_auto_heal=${result.providerHealedFromRuntime}->${result.provider}`);
+        }
+        console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
+
+        if (result.prNumber) {
+          console.log(`review: pr=#${result.prNumber}`);
+        } else {
+          console.log("review: pr=(none)");
+        }
+
+        if (result.followUp?.url) {
+          console.log(`review: follow-up=${result.followUp.url}`);
+        } else if (result.followUp && !result.followUp.created) {
+          console.log(`review: follow-up=(dry-run ${result.followUp.label})`);
+        }
+
+        if (result.committed) {
+          console.log("review: committed and pushed autofix changes.");
+        }
+
+        console.log("\n" + result.summary);
+
+        if (result.exitCode !== 0) {
+          process.exitCode = result.exitCode;
+        }
+      } catch (error) {
+        const errorCode = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : null;
+
+        if (errorCode === REVIEW_NO_ACTIVE_TURN_EXIT_CODE) {
+          console.error("review: no active turn.");
+          console.error(REVIEW_REMEDIATION);
+          process.exitCode = REVIEW_NO_ACTIVE_TURN_EXIT_CODE;
+          return;
+        }
+
+        if (errorCode === REVIEW_INVALID_TURN_EXIT_CODE) {
+          if (error instanceof Error && error.message) {
+            console.error(error.message);
+          } else {
+            console.error("review: invalid active turn.");
+          }
+          console.error(REVIEW_REMEDIATION);
+          process.exitCode = REVIEW_INVALID_TURN_EXIT_CODE;
+          return;
+        }
+
+        console.error("review: ERROR");
+        console.error(error);
+        process.exitCode = 1;
       }
     });
 

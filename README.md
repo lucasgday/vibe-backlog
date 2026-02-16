@@ -96,6 +96,7 @@ vibe init
 # 1) inspect repo + issue state
 vibe preflight
 vibe status
+vibe review --dry-run
 
 # 2) set the real active issue id before apply
 # Edit .vibe/artifacts/postflight.json and replace:
@@ -116,6 +117,7 @@ vibe postflight --apply
 `preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
+`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create follow-up issues when unresolved findings remain.
 
 ## Agent workflow (AGENTS.md)
 
@@ -136,6 +138,7 @@ Use these for deterministic execution:
 pnpm build
 node dist/cli.cjs preflight
 node dist/cli.cjs status
+node dist/cli.cjs review --dry-run
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
@@ -144,3 +147,44 @@ node dist/cli.cjs postflight
 node dist/cli.cjs postflight --apply --dry-run
 node dist/cli.cjs postflight --apply
 ```
+
+## `vibe review` command reference
+
+```bash
+vibe review [options]
+```
+
+Options:
+
+- `--issue <n>`: issue override (defaults to active turn issue).
+- `--agent-provider <auto|codex|claude|gemini|command>`: provider selection (default `auto`).
+- `--agent-cmd "<cmd>"`: explicit external command (highest priority). Fallback: `VIBE_REVIEW_AGENT_CMD`.
+- `--dry-run`: run planning path without mutating git/GitHub.
+- `--no-autofix`: disable agent autofix mode.
+- `--no-autopush`: disable final auto commit/push.
+- `--no-publish`: skip PR summary/review/inline publication.
+- `--max-attempts <n>`: max retry attempts (default `5`).
+- `--strict`: exit non-zero when unresolved findings remain after final attempt.
+- `--followup-label bug|enhancement`: override follow-up issue label.
+
+Provider resolution (highest priority first):
+
+1. `--agent-cmd`
+2. `VIBE_REVIEW_AGENT_CMD`
+3. `--agent-provider` forced mode (`codex|claude|gemini|command`)
+4. `--agent-provider auto` (default):
+   - persisted provider in `.vibe/runtime/review-agent-provider.json`
+   - current host detection
+   - available provider binaries/env overrides (`codex > claude > gemini`)
+
+Provider-specific env overrides:
+
+- `VIBE_REVIEW_CODEX_CMD`
+- `VIBE_REVIEW_CLAUDE_CMD`
+- `VIBE_REVIEW_GEMINI_CMD`
+
+Codex same-session behavior:
+
+- If `CODEX_THREAD_ID` exists, `vibe review` first tries `codex exec resume <thread_id>`.
+- If resume fails or returns invalid JSON, it falls back to external non-interactive Codex execution.
+- This is best-effort only; resume unavailability does not fail the run by itself.
