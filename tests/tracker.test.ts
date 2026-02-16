@@ -30,7 +30,7 @@ describe.sequential("tracker bootstrap core", () => {
 
   it("selects missing milestones and labels deterministically", () => {
     const missingMilestones = selectMissingTrackerMilestones(["UI MVP (local cockpit)"]);
-    const missingLabels = selectMissingTrackerLabels(["module:ui", "module:docs"]);
+    const missingLabels = selectMissingTrackerLabels(["Module:UI", "MODULE:docs"]);
 
     expect(missingMilestones.map((item) => item.title)).toEqual(["CLI usable (repos con .vibe)"]);
     expect(missingLabels.map((item) => item.name)).toEqual([

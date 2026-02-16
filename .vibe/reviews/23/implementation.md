@@ -10,3 +10,7 @@
 - Added paginated GitHub API reads for milestones and labels in tracker bootstrap.
 - `listPaginatedGhApiRecords` now iterates pages (`per_page=100&page=N`) until short page.
 - Fix prevents false-missing module labels when repositories have >100 labels.
+
+## Update 2026-02-16 (label case-insensitive match)
+- Normalized tracker label comparison to lowercase before diffing expected vs existing labels.
+- Prevents duplicate-create attempts when repos already contain case-variant labels (e.g., `Module:CLI`).

@@ -63,6 +63,10 @@ export function getTrackerBootstrapMarkerPath(cwd: string = process.cwd()): stri
   return path.resolve(cwd, TRACKER_BOOTSTRAP_MARKER);
 }
 
+function normalizeTrackerLabelName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function selectMissingTrackerMilestones(existingTitles: Iterable<string>): TrackerMilestoneDefinition[] {
   const existing = new Set(
     Array.from(existingTitles)
@@ -75,10 +79,10 @@ export function selectMissingTrackerMilestones(existingTitles: Iterable<string>)
 export function selectMissingTrackerLabels(existingNames: Iterable<string>): TrackerLabelDefinition[] {
   const existing = new Set(
     Array.from(existingNames)
-      .map((value) => value.trim())
+      .map(normalizeTrackerLabelName)
       .filter(Boolean),
   );
-  return TRACKER_BOOTSTRAP_LABELS.filter((label) => !existing.has(label.name));
+  return TRACKER_BOOTSTRAP_LABELS.filter((label) => !existing.has(normalizeTrackerLabelName(label.name)));
 }
 
 export async function shouldSuggestTrackerBootstrap(cwd: string = process.cwd()): Promise<boolean> {
