@@ -59,6 +59,9 @@ describe("review PR helpers", () => {
 
   it("creates follow-up issue with only labels available in repo", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:cli" }] }) };
+      }
       if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
         return { stdout: JSON.stringify([{ name: "bug" }, { name: "status:backlog" }]) };
       }
@@ -92,6 +95,9 @@ describe("review PR helpers", () => {
   it("retries follow-up issue creation without labels when label add fails", async () => {
     let issueCreateAttempts = 0;
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:tracker" }] }) };
+      }
       if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
         throw new Error("gh label list unavailable");
       }
@@ -122,6 +128,40 @@ describe("review PR helpers", () => {
     expect(issueCreateAttempts).toBe(2);
     expect(result.created).toBe(true);
     expect(result.number).toBe(502);
+  });
+
+  it("inherits module labels from source issue when available", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:ui" }, { name: "status:in-progress" }] }) };
+      }
+      if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ name: "enhancement" }, { name: "status:backlog" }, { name: "module:ui" }]) };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const text = args.join(" ");
+        expect(text).toContain("--label enhancement");
+        expect(text).toContain("--label status:backlog");
+        expect(text).toContain("--label module:ui");
+        return { stdout: "https://example.test/issues/503\n" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await createReviewFollowUpIssue({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      sourceIssueTitle: "review command",
+      findings: [sampleFinding({ kind: "improvement", severity: "P3", pass: "quality" })],
+      reviewSummary: "summary",
+      milestoneTitle: null,
+      dryRun: false,
+      overrideLabel: null,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.number).toBe(503);
+    expect(result.label).toBe("enhancement");
   });
 
   it("continues publishing when one inline comment fails", async () => {

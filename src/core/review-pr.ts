@@ -38,7 +38,7 @@ export type FollowUpIssue = {
 };
 
 export type FollowUpLabelOverride = "bug" | "enhancement" | null;
-const FOLLOW_UP_OPTIONAL_LABELS = ["status:backlog", "module:cli", "module:tracker"] as const;
+const FOLLOW_UP_OPTIONAL_LABELS = ["status:backlog"] as const;
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   const parsed = JSON.parse(stdout) as unknown;
@@ -62,6 +62,17 @@ function parseNullableString(value: unknown): string | null {
 
 function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function parseLabelNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry !== "object" || entry === null) return "";
+      const name = parseNullableString((entry as JsonRecord).name);
+      return name ?? "";
+    })
+    .filter(Boolean);
 }
 
 async function listPaginatedGhApiRecords(execaFn: ExecaFn, endpoint: string, context: string): Promise<JsonRecord[]> {
@@ -451,6 +462,26 @@ function normalizeLabelName(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function selectModuleLabels(labels: Iterable<string>): string[] {
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  for (const label of labels) {
+    const trimmed = label.trim();
+    const normalized = normalizeLabelName(trimmed);
+    if (!normalized.startsWith("module:")) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    picked.push(trimmed);
+  }
+  return picked;
+}
+
+async function listSourceIssueModuleLabels(execaFn: ExecaFn, issueId: number): Promise<string[]> {
+  const viewed = await execaFn("gh", ["issue", "view", String(issueId), "--json", "labels"], { stdio: "pipe" });
+  const row = parseJsonObject(viewed.stdout, "gh issue view labels");
+  return selectModuleLabels(parseLabelNames(row.labels));
+}
+
 async function listRepositoryLabels(execaFn: ExecaFn): Promise<Set<string>> {
   const listed = await execaFn("gh", ["label", "list", "--limit", "500", "--json", "name"], { stdio: "pipe" });
   const rows = parseJsonArray(listed.stdout, "gh label list");
@@ -536,7 +567,14 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
     };
   }
 
-  const requestedLabels: string[] = [label, ...FOLLOW_UP_OPTIONAL_LABELS];
+  let sourceModuleLabels: string[] = [];
+  try {
+    sourceModuleLabels = await listSourceIssueModuleLabels(execaFn, sourceIssueId);
+  } catch {
+    sourceModuleLabels = [];
+  }
+
+  const requestedLabels: string[] = [label, ...FOLLOW_UP_OPTIONAL_LABELS, ...sourceModuleLabels];
   let labelsToApply: string[] = [...requestedLabels];
   try {
     const availableLabels = await listRepositoryLabels(execaFn);
