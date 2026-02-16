@@ -186,4 +186,36 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("Tracker snapshot: unavailable (gh issue list failed)"))).toBe(true);
     expect(process.exitCode).toBeUndefined();
   });
+
+  it("uses dotted branch names when querying branch PR snapshots", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## release/1.2...origin/release/1.2 [ahead 1]" };
+      }
+      if (args[0] === "issue" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "status"]);
+
+    expect(execaMock).toHaveBeenCalledWith(
+      "gh",
+      ["pr", "list", "--head", "release/1.2", "--state", "all", "--json", "number,title,state,url"],
+      { stdio: "pipe" },
+    );
+    expect(logs.some((line) => line.includes("Branch PRs:"))).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+  });
 });

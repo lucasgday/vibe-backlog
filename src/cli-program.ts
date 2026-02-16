@@ -262,8 +262,23 @@ async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string):
 
 function parseCurrentBranchFromStatus(statusOutput: string): string | null {
   const firstLine = statusOutput.split(/\r?\n/)[0]?.trim() ?? "";
-  const match = /^##\s+([^\s.]+)/.exec(firstLine);
-  return match?.[1] ?? null;
+  const match = /^##\s+(.+)$/.exec(firstLine);
+  if (!match) return null;
+
+  const branchInfo = match[1].trim();
+  if (!branchInfo) return null;
+
+  if (branchInfo.startsWith("HEAD ")) return null;
+
+  const noCommitsPrefix = "No commits yet on ";
+  if (branchInfo.startsWith(noCommitsPrefix)) {
+    const branch = branchInfo.slice(noCommitsPrefix.length).trim();
+    return branch || null;
+  }
+
+  const branch = branchInfo.split("...")[0]?.trim() ?? "";
+  const [branchName = ""] = branch.split(/\s+/);
+  return branchName || null;
 }
 
 async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<void> {
