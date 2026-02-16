@@ -117,7 +117,7 @@ describe.sequential("cli tracker bootstrap", () => {
         return { stdout: JSON.stringify(labelPageOne) };
       }
       if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=2") {
-        return { stdout: JSON.stringify([{ name: "module:cli" }]) };
+        return { stdout: JSON.stringify([{ name: "Module:CLI" }]) };
       }
       return { stdout: "" };
     });
