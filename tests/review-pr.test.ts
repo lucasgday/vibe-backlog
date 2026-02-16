@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -170,6 +171,9 @@ describe("review PR helpers", () => {
       if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
         return { stdout: "" };
       }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return { stdout: JSON.stringify({ headRefOid: "fresh-sha-123" }) };
+      }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
         return { stdout: "[]" };
       }
@@ -193,6 +197,7 @@ describe("review PR helpers", () => {
         args[3] === "repos/acme/demo/pulls/99/comments"
       ) {
         inlineAttempts += 1;
+        expect(args.join(" ")).toContain("commit_id=fresh-sha-123");
         if (inlineAttempts === 1) {
           const error = new Error("Validation Failed");
           (error as Error & { stderr?: string }).stderr = "line must be part of pull request diff";
@@ -232,5 +237,68 @@ describe("review PR helpers", () => {
 
     expect(result.inlinePublished).toBe(1);
     expect(result.inlineSkipped).toBe(1);
+  });
+
+  it("converts absolute finding paths to repo-relative for inline comments", async () => {
+    const absoluteFile = path.join(process.cwd(), "src/core/review.ts");
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return { stdout: JSON.stringify({ headRefOid: "fresh-sha-absolute" }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/issues/99/comments"
+      ) {
+        return { stdout: JSON.stringify({ id: 3 }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/pulls/99/comments"
+      ) {
+        expect(args.join(" ")).toContain("path=src/core/review.ts");
+        expect(args.join(" ")).not.toContain(`path=${absoluteFile}`);
+        return { stdout: JSON.stringify({ id: 4 }) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await publishReviewToPullRequest({
+      execaFn: execaMock as never,
+      repo: "acme/demo",
+      pr: {
+        number: 99,
+        url: "https://example.test/pull/99",
+        headRefOid: "stale-sha-should-not-be-used",
+        created: false,
+      },
+      summaryBody: "summary",
+      findings: [
+        sampleFinding({
+          id: "f-absolute",
+          file: absoluteFile,
+          line: 35,
+          title: "absolute",
+        }),
+      ],
+      dryRun: false,
+    });
+
+    expect(result.inlinePublished).toBe(1);
+    expect(result.inlineSkipped).toBe(0);
   });
 });

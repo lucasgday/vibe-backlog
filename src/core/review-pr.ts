@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { execa } from "execa";
 import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 
@@ -112,6 +113,32 @@ function extractIssueNumberFromUrl(url: string | null): number | null {
 
 function normalizeFindingText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toRepoRelativePath(rawPath: string, repoRoot = process.cwd()): string | null {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return null;
+
+  const winAbsolute = path.win32.isAbsolute(trimmed);
+  const posixAbsolute = path.isAbsolute(trimmed);
+  if (winAbsolute || posixAbsolute) {
+    const resolvedAbsolute = posixAbsolute ? path.resolve(trimmed) : path.win32.normalize(trimmed);
+    if (!posixAbsolute) {
+      return null;
+    }
+
+    const relative = path.relative(repoRoot, resolvedAbsolute);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      return null;
+    }
+    return relative.split(path.sep).join("/");
+  }
+
+  const normalized = trimmed.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!normalized || normalized.startsWith("../")) {
+    return null;
+  }
+  return normalized;
 }
 
 export function computeFindingFingerprint(finding: ReviewFinding): string {
@@ -360,19 +387,20 @@ export async function publishReviewToPullRequest(params: PublishReviewParams): P
   }
 
   const fingerprints = await listExistingInlineFingerprints(execaFn, repo, pr.number);
-  const headSha = pr.headRefOid ?? (await resolvePullRequestHeadSha(execaFn, pr.number));
+  const headSha = await resolvePullRequestHeadSha(execaFn, pr.number);
   let inlinePublished = 0;
   let inlineSkipped = 0;
 
   for (const finding of findings) {
-    const file = finding.file ?? null;
+    const file = finding.file ? toRepoRelativePath(finding.file) : null;
     const line = finding.line ?? null;
     if (!file || !line || line <= 0) {
       inlineSkipped += 1;
       continue;
     }
 
-    const fingerprint = computeFindingFingerprint(finding);
+    const findingForFingerprint: ReviewFinding = finding.file === file ? finding : { ...finding, file };
+    const fingerprint = computeFindingFingerprint(findingForFingerprint);
     if (fingerprints.has(fingerprint)) {
       inlineSkipped += 1;
       continue;
