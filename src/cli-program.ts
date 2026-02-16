@@ -15,6 +15,7 @@ import {
   writeTrackerBootstrapMarker,
 } from "./core/tracker";
 import { buildTurnBranch, clearTurnContext, readTurnContext, validateTurnContext, writeTurnContext } from "./core/turn";
+import { ensureIssueReviewTemplates } from "./core/reviews";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -460,6 +461,12 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         };
 
         await writeTurnContext(turnContext);
+        const reviewTemplates = await ensureIssueReviewTemplates(issueId);
+        if (reviewTemplates.created.length) {
+          console.log(`review templates: created ${reviewTemplates.created.length} file(s) at ${reviewTemplates.directory}`);
+        } else {
+          console.log(`review templates: already present at ${reviewTemplates.directory}`);
+        }
         console.log(JSON.stringify(turnContext, null, 2));
       } catch (error) {
         console.error("turn start: ERROR");
