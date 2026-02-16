@@ -101,4 +101,25 @@ describe.sequential("cli guard", () => {
     expect(process.exitCode).toBe(3);
     expect(errors).toContain("guard: invalid active turn (missing/invalid: branch).");
   });
+
+  it("fails as invalid turn when turn.json is malformed", async () => {
+    const turnPath = getTurnContextPath();
+    mkdirSync(path.dirname(turnPath), { recursive: true });
+    writeFileSync(turnPath, '{"issue_id": 10, "branch": "issue-10-vibe-guard",', "utf8");
+
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    const errors: string[] = [];
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "guard"]);
+
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(3);
+    expect(errors).toContain("guard: invalid active turn (malformed turn.json).");
+    expect(errors).toContain("Run: node dist/cli.cjs turn start --issue <n>");
+  });
 });
