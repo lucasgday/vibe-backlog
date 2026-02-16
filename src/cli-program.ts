@@ -23,6 +23,7 @@ import {
   runReviewCommand,
 } from "./core/review";
 import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
+import { runPrOpenCommand } from "./core/pr-open";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -571,6 +572,49 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         await runTrackerBootstrap(execaFn, dryRun);
       } catch (error) {
         console.error("tracker bootstrap: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  const pr = program.command("pr").description("Pull request workflows");
+
+  pr
+    .command("open")
+    .description("Create or reuse an open PR linked to an issue")
+    .option("--issue <n>", "GitHub issue number override")
+    .option("--branch <name>", "Branch override (defaults to active turn/current branch)")
+    .option("--base <name>", "Base branch override (defaults to active turn/main)")
+    .option("--dry-run", "Print planned PR payload without creating PR", false)
+    .action(async (opts) => {
+      try {
+        const result = await runPrOpenCommand(
+          {
+            issueOverride: opts.issue ?? null,
+            branchOverride: opts.branch ?? null,
+            baseBranchOverride: opts.base ?? null,
+            dryRun: Boolean(opts.dryRun),
+          },
+          execaFn,
+        );
+
+        if (result.dryRun) {
+          console.log(`pr open: dry-run issue=#${result.issueId} branch=${result.branch} base=${result.baseBranch}`);
+          console.log(`title: ${result.title}`);
+          console.log("body:");
+          console.log(result.body);
+          return;
+        }
+
+        const numberText = result.prNumber ? `#${result.prNumber}` : "(unknown)";
+        const urlText = result.prUrl ?? "(no-url)";
+        if (result.created) {
+          console.log(`pr open: created ${numberText} ${urlText}`);
+        } else {
+          console.log(`pr open: already open ${numberText} ${urlText}`);
+        }
+      } catch (error) {
+        console.error("pr open: ERROR");
         console.error(error);
         process.exitCode = 1;
       }
