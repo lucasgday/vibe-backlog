@@ -147,8 +147,20 @@ describe.sequential("cli tracker bootstrap", () => {
       if (args[0] === "status") {
         return { stdout: "## main" };
       }
-      if (args[0] === "issue" && args[1] === "list") {
-        return { stdout: "1\tOPEN\tfeat: something" };
+      if (args[0] === "issue" && args[1] === "list" && args[2] === "--state") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 1,
+              title: "feat: something",
+              state: "OPEN",
+              labels: [],
+              milestone: null,
+              updatedAt: "2026-02-16T00:00:00Z",
+              url: "https://example.test/issues/1",
+            },
+          ]),
+        };
       }
       return { stdout: "" };
     });
