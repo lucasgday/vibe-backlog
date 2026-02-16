@@ -34,10 +34,10 @@ describe.sequential("cli tracker bootstrap", () => {
       if (args[0] === "repo" && args[1] === "view") {
         return { stdout: "acme/demo\n" };
       }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all") {
+      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
         return { stdout: "[]" };
       }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100") {
+      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
         return { stdout: "[]" };
       }
       return { stdout: "" };
@@ -64,12 +64,12 @@ describe.sequential("cli tracker bootstrap", () => {
       if (args[0] === "repo" && args[1] === "view") {
         return { stdout: "acme/demo\n" };
       }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all") {
+      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
         return {
           stdout: JSON.stringify([{ title: "UI MVP (local cockpit)" }]),
         };
       }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100") {
+      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
         return {
           stdout: JSON.stringify([{ name: "module:ui" }]),
         };
@@ -102,6 +102,42 @@ describe.sequential("cli tracker bootstrap", () => {
     ).toBe(false);
     expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(true);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("paginates labels and skips creating module label that exists on later page", async () => {
+    const labelPageOne = Array.from({ length: 100 }, (_unused, index) => ({ name: `custom-${index}` }));
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
+        return { stdout: JSON.stringify(labelPageOne) };
+      }
+      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=2") {
+        return { stdout: JSON.stringify([{ name: "module:cli" }]) };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "tracker", "bootstrap"]);
+
+    const commands = execaMock.mock.calls.map((call) => [call[0], call[1]] as [string, string[]]);
+    expect(
+      commands.some(([cmd, args]) => cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=2"),
+    ).toBe(true);
+    expect(
+      commands.some(([cmd, args]) => cmd === "gh" && args[0] === "label" && args[1] === "create" && args[2] === "module:cli"),
+    ).toBe(false);
+    expect(
+      commands.some(([cmd, args]) => cmd === "gh" && args[0] === "label" && args[1] === "create" && args[2] === "module:tracker"),
+    ).toBe(true);
   });
 
   it("shows preflight hint when .vibe exists without tracker marker", async () => {

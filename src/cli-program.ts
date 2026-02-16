@@ -19,6 +19,7 @@ type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
 const GUARD_INVALID_TURN_EXIT_CODE = 3;
 const GUARD_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
+const GH_API_PAGE_SIZE = 100;
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
@@ -45,9 +46,25 @@ async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
   return slug;
 }
 
+async function listPaginatedGhApiRecords(execaFn: ExecaFn, endpoint: string, context: string): Promise<JsonRecord[]> {
+  const all: JsonRecord[] = [];
+
+  for (let page = 1; ; page += 1) {
+    const separator = endpoint.includes("?") ? "&" : "?";
+    const paginatedEndpoint = `${endpoint}${separator}per_page=${GH_API_PAGE_SIZE}&page=${page}`;
+    const response = await execaFn("gh", ["api", paginatedEndpoint], { stdio: "pipe" });
+    const parsed = parseJsonArray(response.stdout, context);
+    all.push(...parsed);
+    if (parsed.length < GH_API_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return all;
+}
+
 async function listExistingMilestoneTitles(execaFn: ExecaFn, repo: string): Promise<Set<string>> {
-  const response = await execaFn("gh", ["api", `repos/${repo}/milestones?state=all`], { stdio: "pipe" });
-  const parsed = parseJsonArray(response.stdout, "gh milestones");
+  const parsed = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/milestones?state=all`, "gh milestones");
   const titles = parsed
     .map((row) => row.title)
     .filter((value): value is string => typeof value === "string")
@@ -57,8 +74,7 @@ async function listExistingMilestoneTitles(execaFn: ExecaFn, repo: string): Prom
 }
 
 async function listExistingLabelNames(execaFn: ExecaFn, repo: string): Promise<Set<string>> {
-  const response = await execaFn("gh", ["api", `repos/${repo}/labels?per_page=100`], { stdio: "pipe" });
-  const parsed = parseJsonArray(response.stdout, "gh labels");
+  const parsed = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/labels`, "gh labels");
   const names = parsed
     .map((row) => row.name)
     .filter((value): value is string => typeof value === "string")
