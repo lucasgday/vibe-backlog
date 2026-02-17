@@ -127,7 +127,7 @@ describe.sequential("cli status and preflight snapshots", () => {
 
   it("prints preflight in-progress section and hygiene warnings", async () => {
     const logs: string[] = [];
-    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main" };
       }
@@ -146,6 +146,9 @@ describe.sequential("cli status and preflight snapshots", () => {
           ]),
         };
       }
+      if (cmd === "zsh" && args[0] === "-lc") {
+        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+      }
       return { stdout: "" };
     });
 
@@ -160,7 +163,37 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("Open issues (top 10):"))).toBe(true);
     expect(logs.some((line) => line.includes("In-progress issues:"))).toBe(true);
     expect(logs.some((line) => line.includes("Tracker hygiene warnings:"))).toBe(true);
+    expect(logs.some((line) => line.includes("Security scan:"))).toBe(true);
+    expect(logs.some((line) => line.includes("gitleaks: available"))).toBe(true);
     expect(logs.some((line) => line.includes("none"))).toBe(true);
+  });
+
+  it("keeps preflight non-blocking when security probe fails", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## main" };
+      }
+      if (args[0] === "issue" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "zsh" && args[0] === "-lc") {
+        throw new Error("security probe unavailable");
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "preflight"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("Security scan:"))).toBe(true);
+    expect(logs.some((line) => line.includes("gitleaks: missing"))).toBe(true);
   });
 
   it("keeps status non-blocking when gh is unavailable", async () => {
