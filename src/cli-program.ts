@@ -83,6 +83,10 @@ function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   return parsed.filter((value): value is JsonRecord => typeof value === "object" && value !== null);
 }
 
+function parsePositiveInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function parseLabelNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -304,6 +308,24 @@ async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string):
   return parsePullRequestSnapshots(response.stdout, "gh pr list");
 }
 
+async function findOpenPullRequestNumberByBranch(execaFn: ExecaFn, branch: string): Promise<number | null> {
+  const response = await runGhWithRetry(
+    execaFn,
+    ["pr", "list", "--head", branch, "--state", "open", "--json", "number"],
+    {
+      stdio: "pipe",
+    },
+  );
+
+  const rows = parseJsonArray(response.stdout, "gh pr list");
+  for (const row of rows) {
+    const number = parsePositiveInt(row.number);
+    if (number) return number;
+  }
+
+  return null;
+}
+
 async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<string> {
   const response = await execaFn("git", ["rev-parse", ref], { stdio: "pipe" });
   const head = response.stdout.trim();
@@ -311,6 +333,32 @@ async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<stri
     throw new Error(`unable to resolve git ref HEAD sha for '${ref}'`);
   }
   return head;
+}
+
+async function enforcePostflightApplyReviewGate(params: {
+  execaFn: ExecaFn;
+  issueId: string;
+  branch: string;
+  dryRun: boolean;
+}): Promise<void> {
+  const { execaFn, issueId, branch, dryRun } = params;
+  if (dryRun) return;
+
+  const normalizedBranch = branch.trim();
+  if (!normalizedBranch) return;
+
+  const prNumber = await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
+  if (!prNumber) return;
+
+  const repo = await resolveRepoNameWithOwner(execaFn);
+  const headSha = await resolveGitRefHeadSha(execaFn, normalizedBranch);
+  const hasReview = await hasReviewForHead(execaFn, repo, prNumber, headSha);
+  if (hasReview) return;
+
+  const shortHead = headSha.slice(0, 12);
+  throw new Error(
+    `postflight --apply: review gate missing for branch '${normalizedBranch}' HEAD ${shortHead} on PR #${prNumber}. Run: node dist/cli.cjs review --issue ${issueId}`,
+  );
 }
 
 async function resolveCurrentBranchName(execaFn: ExecaFn): Promise<string> {
@@ -1443,6 +1491,13 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           process.exitCode = 1;
           return;
         }
+
+        await enforcePostflightApplyReviewGate({
+          execaFn,
+          issueId,
+          branch: parsed.data.work.branch,
+          dryRun: Boolean(opts.dryRun),
+        });
 
         const updates = parsed.data.tracker_updates ?? [];
         const cmds = buildTrackerCommands(issueId, updates);
