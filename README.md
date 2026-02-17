@@ -134,6 +134,11 @@ This repo supports LLM-driven development. The file `AGENTS.md` is the agent con
 
 LLMs (Codex, Claude, etc.) must read and follow `AGENTS.md` before making changes.
 
+## Security
+
+- Vulnerability reporting policy: `SECURITY.md`
+- CI log/artifact hardening policy: `.github/CI_SECURITY.md`
+
 ## Canonical commands (recommended)
 
 Use these for deterministic execution:
