@@ -53,6 +53,9 @@ const RATIONALE_SECTIONS: readonly RationaleSectionDescriptor[] = [
   },
 ];
 
+const RATIONALE_AUTOCLOSE_FOOTER_REGEX = /^\s*(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+\s*$/im;
+const TODO_PLACEHOLDER_LINE_REGEX = /(?:^|\r?\n)\s*(?:[-*]\s+)?TODO(?:\s*:|\b)/i;
+
 function normalizeHeading(raw: string | undefined, fallback: string): string {
   const trimmed = raw?.trim() ?? "";
   return trimmed || fallback;
@@ -82,7 +85,15 @@ function findSectionBounds(body: string, headerRegex: RegExp): RationaleSectionB
 
   const remainder = body.slice(contentStart);
   const nextHeadingOffset = remainder.search(/^##\s+/m);
-  const end = nextHeadingOffset < 0 ? body.length : contentStart + nextHeadingOffset;
+  let end = nextHeadingOffset < 0 ? body.length : contentStart + nextHeadingOffset;
+
+  // Preserve footer tokens (e.g. "Fixes #123") when rationale is the last heading.
+  if (nextHeadingOffset < 0) {
+    const footerMatch = RATIONALE_AUTOCLOSE_FOOTER_REGEX.exec(remainder);
+    if (footerMatch && typeof footerMatch.index === "number") {
+      end = contentStart + footerMatch.index;
+    }
+  }
 
   return {
     header,
@@ -93,8 +104,8 @@ function findSectionBounds(body: string, headerRegex: RegExp): RationaleSectionB
   };
 }
 
-function sectionContainsTodo(content: string): boolean {
-  return /\bTODO\b/i.test(content);
+function sectionContainsTodoPlaceholder(content: string): boolean {
+  return TODO_PLACEHOLDER_LINE_REGEX.test(content);
 }
 
 function buildSectionLines(id: RationaleSectionId, context: RationaleContext): string[] {
@@ -115,7 +126,7 @@ function buildSectionLines(id: RationaleSectionId, context: RationaleContext): s
   }
 
   return [
-    "- Keep TODO placeholders and rely on manual cleanup: rejected due to inconsistent PR quality.",
+    "- Keep placeholder rationale and rely on manual cleanup: rejected due to inconsistent PR quality.",
     "- Retry until max attempts regardless of autofix progress: rejected due to repeated no-op loops.",
     "- Commit on every attempt: rejected due to noisy history and harder rollback auditing.",
   ];
@@ -165,7 +176,7 @@ export function hasRationaleTodoPlaceholders(body: string): boolean {
   for (const section of RATIONALE_SECTIONS) {
     const bounds = findSectionBounds(body, section.headerRegex);
     if (!bounds) continue;
-    if (sectionContainsTodo(bounds.content)) return true;
+    if (sectionContainsTodoPlaceholder(bounds.content)) return true;
   }
   return false;
 }
@@ -181,7 +192,7 @@ export function autofillRationaleSections(
   for (const section of RATIONALE_SECTIONS) {
     const bounds = findSectionBounds(nextBody, section.headerRegex);
     if (!bounds) continue;
-    if (!sectionContainsTodo(bounds.content)) continue;
+    if (!sectionContainsTodoPlaceholder(bounds.content)) continue;
 
     const sectionLines = buildSectionLines(section.id, context).join("\n");
     const hasNextHeading = bounds.end < nextBody.length;

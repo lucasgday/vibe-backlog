@@ -278,6 +278,8 @@ describe.sequential("cli pr open", () => {
               "",
               "## Extra section",
               "- keep me",
+              "",
+              "Fixes #6",
             ].join("\n"),
           }),
         };
@@ -290,6 +292,7 @@ describe.sequential("cli pr open", () => {
         expect(body).toContain("## Alternatives considered / rejected");
         expect(body).not.toContain("TODO:");
         expect(body).toContain("## Extra section");
+        expect(body).toContain("Fixes #6");
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
