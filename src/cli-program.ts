@@ -26,6 +26,8 @@ import {
 } from "./core/review";
 import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 import { runPrOpenCommand } from "./core/pr-open";
+import { hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
+import { runGhWithRetry } from "./core/gh-retry";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -214,7 +216,7 @@ async function promptTrackerReconcileValue(request: TrackerReconcilePromptReques
 }
 
 async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
-  const repo = await execaFn("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
+  const repo = await runGhWithRetry(execaFn, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
     stdio: "pipe",
   });
   const slug = repo.stdout.trim();
@@ -230,7 +232,7 @@ async function listPaginatedGhApiRecords(execaFn: ExecaFn, endpoint: string, con
   for (let page = 1; ; page += 1) {
     const separator = endpoint.includes("?") ? "&" : "?";
     const paginatedEndpoint = `${endpoint}${separator}per_page=${GH_API_PAGE_SIZE}&page=${page}`;
-    const response = await execaFn("gh", ["api", paginatedEndpoint], { stdio: "pipe" });
+    const response = await runGhWithRetry(execaFn, ["api", paginatedEndpoint], { stdio: "pipe" });
     const parsed = parseJsonArray(response.stdout, context);
     all.push(...parsed);
     if (parsed.length < GH_API_PAGE_SIZE) {
@@ -262,8 +264,8 @@ async function listExistingLabelNames(execaFn: ExecaFn, repo: string): Promise<S
 }
 
 async function listOpenIssueSnapshots(execaFn: ExecaFn, limit: number): Promise<IssueSnapshot[]> {
-  const response = await execaFn(
-    "gh",
+  const response = await runGhWithRetry(
+    execaFn,
     ["issue", "list", "--state", "open", "-L", String(limit), "--json", "number,title,state,labels,milestone,updatedAt,url"],
     { stdio: "pipe" },
   );
@@ -271,8 +273,8 @@ async function listOpenIssueSnapshots(execaFn: ExecaFn, limit: number): Promise<
 }
 
 async function fetchIssueSnapshotByNumber(execaFn: ExecaFn, issueId: number): Promise<IssueSnapshot | null> {
-  const response = await execaFn(
-    "gh",
+  const response = await runGhWithRetry(
+    execaFn,
     ["issue", "view", String(issueId), "--json", "number,title,state,labels,milestone,updatedAt,url"],
     {
       stdio: "pipe",
@@ -283,10 +285,23 @@ async function fetchIssueSnapshotByNumber(execaFn: ExecaFn, issueId: number): Pr
 }
 
 async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string): Promise<PullRequestSnapshot[]> {
-  const response = await execaFn("gh", ["pr", "list", "--head", branch, "--state", "all", "--json", "number,title,state,url"], {
-    stdio: "pipe",
-  });
+  const response = await runGhWithRetry(
+    execaFn,
+    ["pr", "list", "--head", branch, "--state", "all", "--json", "number,title,state,url"],
+    {
+      stdio: "pipe",
+    },
+  );
   return parsePullRequestSnapshots(response.stdout, "gh pr list");
+}
+
+async function resolveCurrentHeadSha(execaFn: ExecaFn): Promise<string> {
+  const response = await execaFn("git", ["rev-parse", "HEAD"], { stdio: "pipe" });
+  const head = response.stdout.trim();
+  if (!head) {
+    throw new Error("unable to resolve current HEAD sha");
+  }
+  return head;
 }
 
 function parseCurrentBranchFromStatus(statusOutput: string): string | null {
@@ -345,7 +360,7 @@ async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<v
       ];
       printGhCommand(args);
       if (!dryRun) {
-        await execaFn("gh", args, { stdio: "inherit" });
+        await runGhWithRetry(execaFn, args, { stdio: "inherit" });
       }
     }
   } else {
@@ -359,7 +374,7 @@ async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<v
       const args = ["label", "create", label.name, "--color", label.color, "--description", label.description];
       printGhCommand(args);
       if (!dryRun) {
-        await execaFn("gh", args, { stdio: "inherit" });
+        await runGhWithRetry(execaFn, args, { stdio: "inherit" });
       }
     }
   } else {
@@ -396,7 +411,7 @@ async function syncPrBodiesWithIssueReference(params: PrBodySyncParams): Promise
 
     const viewArgs = ["pr", "view", pr, "--json", "body,url"];
     printGhCommand(viewArgs);
-    const prView = await execaFn("gh", viewArgs, { stdio: "pipe" });
+    const prView = await runGhWithRetry(execaFn, viewArgs, { stdio: "pipe" });
 
     let currentBody = "";
     if (prView.stdout.trim()) {
@@ -414,13 +429,13 @@ async function syncPrBodiesWithIssueReference(params: PrBodySyncParams): Promise
 
     const editArgs = ["pr", "edit", pr, "--body", nextBody];
     printGhCommand(editArgs);
-    await execaFn("gh", editArgs, { stdio: "inherit" });
+    await runGhWithRetry(execaFn, editArgs, { stdio: "inherit" });
   }
 }
 
 async function issueTitleFromGitHub(execaFn: ExecaFn, issueId: number): Promise<string> {
   try {
-    const issue = await execaFn("gh", ["issue", "view", String(issueId), "--json", "title", "-q", ".title"], {
+    const issue = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title", "-q", ".title"], {
       stdio: "pipe",
     });
     const title = issue.stdout.trim();
@@ -680,6 +695,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("--branch <name>", "Branch override (defaults to active turn/current branch)")
     .option("--base <name>", "Base branch override (defaults to active turn/main)")
     .option("--dry-run", "Print planned PR payload without creating PR", false)
+    .option("--skip-review-gate", "Bypass review gate and leave an audit marker on the PR", false)
     .action(async (opts) => {
       try {
         const result = await runPrOpenCommand(
@@ -697,16 +713,71 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           console.log(`title: ${result.title}`);
           console.log("body:");
           console.log(result.body);
+        } else {
+          const numberText = result.prNumber ? `#${result.prNumber}` : "(unknown)";
+          const urlText = result.prUrl ?? "(no-url)";
+          if (result.created) {
+            console.log(`pr open: created ${numberText} ${urlText}`);
+          } else {
+            console.log(`pr open: already open ${numberText} ${urlText}`);
+          }
+        }
+
+        const skipReviewGate = Boolean(opts.skipReviewGate);
+        if (skipReviewGate && result.dryRun) {
+          console.log("pr open: review gate skipped (dry-run, no audit comment).");
           return;
         }
 
-        const numberText = result.prNumber ? `#${result.prNumber}` : "(unknown)";
-        const urlText = result.prUrl ?? "(no-url)";
-        if (result.created) {
-          console.log(`pr open: created ${numberText} ${urlText}`);
-        } else {
-          console.log(`pr open: already open ${numberText} ${urlText}`);
+        const headSha = await resolveCurrentHeadSha(execaFn);
+        const shortHead = headSha.slice(0, 12);
+
+        if (skipReviewGate) {
+          if (result.prNumber) {
+            const repo = await resolveRepoNameWithOwner(execaFn);
+            await postReviewGateSkipComment({
+              execaFn,
+              repo,
+              prNumber: result.prNumber,
+              issueId: result.issueId,
+              headSha,
+              dryRun: result.dryRun,
+            });
+          }
+          console.log(`pr open: review gate skipped for HEAD ${shortHead}.`);
+          return;
         }
+
+        let gateSatisfied = false;
+        if (result.prNumber) {
+          const repo = await resolveRepoNameWithOwner(execaFn);
+          gateSatisfied = await hasReviewForHead(execaFn, repo, result.prNumber, headSha);
+        }
+
+        if (gateSatisfied) {
+          console.log(`pr open: review gate satisfied for HEAD ${shortHead}.`);
+          return;
+        }
+
+        console.log(`pr open: review gate missing for HEAD ${shortHead}; running vibe review...`);
+        const reviewResult = await runReviewCommand(
+          {
+            issueOverride: result.issueId,
+            agentProvider: "auto",
+            agentCmd: null,
+            dryRun: result.dryRun,
+            autofix: true,
+            autopush: true,
+            publish: true,
+            maxAttempts: 5,
+            strict: false,
+            followupLabel: null,
+          },
+          execaFn,
+        );
+        console.log(
+          `pr open: review gate complete attempts=${reviewResult.attemptsUsed} unresolved=${reviewResult.unresolvedFindings.length}`,
+        );
       } catch (error) {
         console.error("pr open: ERROR");
         console.error(error);
@@ -925,7 +996,11 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         const errorCode = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : null;
 
         if (errorCode === REVIEW_NO_ACTIVE_TURN_EXIT_CODE) {
-          console.error("review: no active turn.");
+          if (error instanceof Error && error.message) {
+            console.error(error.message);
+          } else {
+            console.error("review: no active turn.");
+          }
           console.error(REVIEW_REMEDIATION);
           process.exitCode = REVIEW_NO_ACTIVE_TURN_EXIT_CODE;
           return;
@@ -1056,7 +1131,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         for (const c of cmds) {
           printGhCommand(c.args);
           if (!opts.dryRun) {
-            await execaFn(c.cmd, c.args, { stdio: "inherit" });
+            await runGhWithRetry(execaFn, c.args, { stdio: "inherit" });
           }
         }
 

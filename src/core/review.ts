@@ -22,11 +22,12 @@ import {
 import { appendReviewSummaryToPostflight } from "./review-postflight";
 import { ensureIssueReviewTemplates, getIssueReviewDirectory } from "./reviews";
 import { readTurnContext, validateTurnContext } from "./turn";
+import { runGhWithRetry } from "./gh-retry";
 
 export const REVIEW_NO_ACTIVE_TURN_EXIT_CODE = 2;
 export const REVIEW_INVALID_TURN_EXIT_CODE = 3;
 export const REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE = 4;
-export const REVIEW_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
+export const REVIEW_REMEDIATION = "Run: node dist/cli.cjs review --issue <n> (or: node dist/cli.cjs turn start --issue <n>)";
 type ExecaFn = typeof execa;
 
 export type ReviewCommandOptions = {
@@ -67,6 +68,11 @@ type ReviewRunContext = {
   baseBranch: string;
 };
 
+type ReviewBranchPrSnapshot = {
+  body: string | null;
+  baseRefName: string | null;
+};
+
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
   if (value === undefined || value === null || value === "") return null;
   const raw = typeof value === "number" ? String(value) : String(value).trim();
@@ -87,10 +93,78 @@ function normalizeMaxAttempts(value: number): number {
 async function resolveCurrentBranch(execaFn: ExecaFn): Promise<string> {
   const response = await execaFn("git", ["rev-parse", "--abbrev-ref", "HEAD"], { stdio: "pipe" });
   const branch = response.stdout.trim();
-  if (!branch) {
+  if (!branch || branch === "HEAD") {
     throw new Error("review: unable to resolve current git branch");
   }
   return branch;
+}
+
+async function resolveCurrentHeadSha(execaFn: ExecaFn): Promise<string> {
+  const response = await execaFn("git", ["rev-parse", "HEAD"], { stdio: "pipe" });
+  const sha = response.stdout.trim();
+  if (!sha) {
+    throw new Error("review: unable to resolve current HEAD sha");
+  }
+  return sha;
+}
+
+function inferIssueIdFromBranch(branch: string): number | null {
+  const issuePattern = /(?:^|\/)issue-(\d+)(?:-|$)/i;
+  const workflowPattern = /(?:^|\/)(?:feat|fix|chore|docs|refactor|test)\/(\d+)(?:-|$)/i;
+
+  const issueMatch = issuePattern.exec(branch);
+  if (issueMatch) {
+    const parsed = Number(issueMatch[1]);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+
+  const workflowMatch = workflowPattern.exec(branch);
+  if (workflowMatch) {
+    const parsed = Number(workflowMatch[1]);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+
+  return null;
+}
+
+function parseJsonArray(stdout: string, context: string): Record<string, unknown>[] {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${context}: expected array response`);
+  }
+  return parsed.filter((value): value is Record<string, unknown> => typeof value === "object" && value !== null);
+}
+
+function parseNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+function extractIssueIdFromPrBody(body: string): number | null {
+  const regex = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  let match: RegExpExecArray | null = regex.exec(body);
+  while (match) {
+    const parsed = Number(match[1]);
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+    match = regex.exec(body);
+  }
+  return null;
+}
+
+async function findOpenPrByBranch(execaFn: ExecaFn, branch: string): Promise<ReviewBranchPrSnapshot | null> {
+  const listed = await runGhWithRetry(
+    execaFn,
+    ["pr", "list", "--head", branch, "--state", "open", "--json", "number,body,baseRefName"],
+    { stdio: "pipe" },
+  );
+  const rows = parseJsonArray(listed.stdout, "review: gh pr list");
+  for (const row of rows) {
+    const body = parseNullableString(row.body);
+    const baseRefName = parseNullableString(row.baseRefName);
+    return { body, baseRefName };
+  }
+  return null;
 }
 
 async function isWorkingTreeClean(execaFn: ExecaFn): Promise<boolean> {
@@ -99,47 +173,63 @@ async function isWorkingTreeClean(execaFn: ExecaFn): Promise<boolean> {
 }
 
 async function resolveReviewRunContext(execaFn: ExecaFn, issueOverride: string | number | null | undefined): Promise<ReviewRunContext> {
-  let activeTurn;
-  try {
-    activeTurn = await readTurnContext();
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      const invalid = new Error("review: invalid active turn (malformed turn.json).");
-      (invalid as Error & { code?: number }).code = REVIEW_INVALID_TURN_EXIT_CODE;
-      throw invalid;
-    }
-    throw error;
-  }
-
-  if (!activeTurn) {
-    const noTurn = new Error("review: no active turn.");
-    (noTurn as Error & { code?: number }).code = REVIEW_NO_ACTIVE_TURN_EXIT_CODE;
-    throw noTurn;
-  }
-
-  const turnErrors = validateTurnContext(activeTurn);
-  if (turnErrors.length) {
-    const invalid = new Error(`review: invalid active turn (missing/invalid: ${turnErrors.join(", ")}).`);
-    (invalid as Error & { code?: number }).code = REVIEW_INVALID_TURN_EXIT_CODE;
-    throw invalid;
-  }
-
   const overrideProvided = issueOverride !== undefined && issueOverride !== null && String(issueOverride).trim() !== "";
   const parsedOverride = parseIssueIdOverride(issueOverride);
   if (overrideProvided && parsedOverride === null) {
     throw new Error("review: --issue debe ser un entero positivo.");
   }
 
-  const issueId = parsedOverride ?? activeTurn.issue_id;
-  if (!Number.isSafeInteger(issueId) || issueId <= 0) {
-    throw new Error("review: --issue debe ser un entero positivo.");
+  const branch = await resolveCurrentBranch(execaFn);
+
+  let activeTurn: Awaited<ReturnType<typeof readTurnContext>> = null;
+  let invalidTurnReason: string | null = null;
+  try {
+    activeTurn = await readTurnContext();
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      invalidTurnReason = "malformed turn.json";
+      activeTurn = null;
+    } else {
+      throw error;
+    }
   }
 
-  const branch = await resolveCurrentBranch(execaFn);
+  const hasTurn = activeTurn !== null;
+  const turnErrors = hasTurn ? validateTurnContext(activeTurn) : [];
+  const validTurn = hasTurn && turnErrors.length === 0 ? activeTurn : null;
+
+  if (hasTurn && !validTurn) {
+    invalidTurnReason = `missing/invalid: ${turnErrors.join(", ")}`;
+  }
+
+  const branchInferredIssue = inferIssueIdFromBranch(branch);
+
+  let prSnapshot: ReviewBranchPrSnapshot | null = null;
+  try {
+    prSnapshot = await findOpenPrByBranch(execaFn, branch);
+  } catch {
+    prSnapshot = null;
+  }
+
+  const prBodyInferredIssue = prSnapshot?.body ? extractIssueIdFromPrBody(prSnapshot.body) : null;
+
+  const issueId = parsedOverride ?? validTurn?.issue_id ?? branchInferredIssue ?? prBodyInferredIssue ?? null;
+  if (!issueId || !Number.isSafeInteger(issueId) || issueId <= 0) {
+    if (invalidTurnReason) {
+      const invalid = new Error(`review: invalid active turn (${invalidTurnReason}).`);
+      (invalid as Error & { code?: number }).code = REVIEW_INVALID_TURN_EXIT_CODE;
+      throw invalid;
+    }
+    const unresolved = new Error("review: unable to resolve issue context (use --issue <n>).");
+    (unresolved as Error & { code?: number }).code = REVIEW_NO_ACTIVE_TURN_EXIT_CODE;
+    throw unresolved;
+  }
+
+  const baseBranch = validTurn?.base_branch ?? prSnapshot?.baseRefName ?? "main";
   return {
     issueId,
     branch,
-    baseBranch: activeTurn.base_branch,
+    baseBranch,
   };
 }
 
@@ -433,12 +523,19 @@ export async function runReviewCommand(
     committed = await commitAndPushChanges(execaFn, finalOutput.run_id);
   }
 
+  let summaryHeadSha: string | null = null;
+  try {
+    summaryHeadSha = await resolveCurrentHeadSha(execaFn);
+  } catch {
+    summaryHeadSha = null;
+  }
+
   if (options.publish) {
     await publishReviewToPullRequest({
       execaFn,
       repo,
       pr,
-      summaryBody: buildReviewSummaryBody(summary),
+      summaryBody: buildReviewSummaryBody(summary, summaryHeadSha),
       findings: unresolvedFindings,
       dryRun: options.dryRun,
     });

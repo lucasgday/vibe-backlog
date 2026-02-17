@@ -1,5 +1,6 @@
 export * from "./parser";
 export * from "./service";
+export * from "./gh-retry";
 export * from "./postflight";
 export * from "./turn";
 export * from "./tracker";

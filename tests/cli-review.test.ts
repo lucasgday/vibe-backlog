@@ -89,9 +89,13 @@ describe.sequential("cli review", () => {
     }
   });
 
-  it("returns exit code 2 when no active turn exists", async () => {
+  it("returns exit code 2 when issue context cannot be resolved", async () => {
     const errors: string[] = [];
-    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      return { stdout: "" };
+    });
     vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       errors.push(args.map((arg) => String(arg)).join(" "));
     });
@@ -101,8 +105,7 @@ describe.sequential("cli review", () => {
     await program.parseAsync(["node", "vibe", "review", "--agent-cmd", "cat"]);
 
     expect(process.exitCode).toBe(2);
-    expect(errors).toContain("review: no active turn.");
-    expect(execaMock).not.toHaveBeenCalled();
+    expect(errors.some((line) => line.includes("unable to resolve issue context"))).toBe(true);
   });
 
   it("fails with exit 1 on invalid --agent-provider", async () => {
@@ -127,7 +130,11 @@ describe.sequential("cli review", () => {
     writeFileSync(turnPath, '{"issue_id": 34, "branch": "codex/issue-34-vibe-review",', "utf8");
 
     const errors: string[] = [];
-    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      return { stdout: "" };
+    });
     vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       errors.push(args.map((arg) => String(arg)).join(" "));
     });
@@ -138,7 +145,97 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBe(3);
     expect(errors.some((line) => line.includes("malformed turn.json"))).toBe(true);
-    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("runs without active turn when --issue is provided", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "issue override", url: "https://example.test/issues/42", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-override", findingsCount: 0 }) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--dry-run", "--issue", "42"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review: issue=#42"))).toBe(true);
+  });
+
+  it("infers issue id from branch name when no turn exists", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "issue-77-new-flow\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "branch inferred", url: "https://example.test/issues/77", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-branch", findingsCount: 0 }) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--dry-run"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review: issue=#77"))).toBe(true);
+  });
+
+  it("falls back to open PR body autoclose reference when branch has no issue id", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/release-branch\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 9,
+              body: "## Summary\n\nFixes #88",
+              baseRefName: "develop",
+              url: "https://example.test/pull/9",
+              headRefOid: "abc123def",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "pr body inferred", url: "https://example.test/issues/88", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-pr-body", findingsCount: 0 }) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--dry-run"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review: issue=#88"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: pr=#9"))).toBe(true);
   });
 
   it("fails with exit 1 when no provider is available", async () => {
@@ -385,7 +482,15 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBe(1);
     expect(errors.some((line) => line.includes("autopush blocked on main branch"))).toBe(true);
-    expect(execaMock.mock.calls.some(([cmd]) => cmd === "gh")).toBe(false);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          Array.isArray(args) &&
+          !(args[0] === "pr" && args[1] === "list"),
+      ),
+    ).toBe(false);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
   });
 
   it("attempts codex resume first and falls back to standard codex exec", async () => {
