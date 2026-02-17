@@ -35,6 +35,18 @@ describe.sequential("cli turn start", () => {
       if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
         return { stdout: "" };
       }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "origin/main\n", exitCode: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-list" && args[1] === "--left-right" && args[2] === "--count") {
+        return { stdout: "0\t0\n", exitCode: 0 };
+      }
       if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main...origin/main\n" };
       }
@@ -94,6 +106,15 @@ describe.sequential("cli turn start", () => {
       if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
         return { stdout: "" };
       }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "", exitCode: 1 };
+      }
       if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main\n" };
       }
@@ -136,11 +157,80 @@ describe.sequential("cli turn start", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("ignores descriptor-like bracket subject when branch has no upstream", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
+        return { stdout: "" };
+      }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "", exitCode: 1 };
+      }
+      if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## main\n" };
+      }
+      if (cmd === "git" && args[0] === "branch" && args[1] === "-vv") {
+        return { stdout: "* main 0f00baa [origin/main: behind 1] chore: descriptor-like subject\n" };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return { stdout: "[]\n" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view" && args[2] === "43") {
+        return { stdout: "descriptor-like subject\n" };
+      }
+      if (cmd === "git" && args[0] === "show-ref") {
+        return { stdout: "", exitCode: 1 };
+      }
+      if (cmd === "git" && args[0] === "checkout" && args[1] === "-b") {
+        return { stdout: "" };
+      }
+
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "turn", "start", "--issue", "43"]);
+
+    const turnPath = getTurnContextPath();
+    expect(existsSync(turnPath)).toBe(true);
+    expect(readFileSync(turnPath, "utf8")).toContain('"issue_id": 43');
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "checkout" && args[1] === "-b",
+      ),
+    ).toBe(true);
+    expect(logs.some((line) => line.includes("review templates: created 5 file(s)"))).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it("blocks turn start when current branch is behind upstream", async () => {
     const errors: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
         return { stdout: "" };
+      }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "origin/main\n", exitCode: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-list" && args[1] === "--left-right" && args[2] === "--count") {
+        return { stdout: "0\t2\n", exitCode: 0 };
       }
       if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main...origin/main [behind 2]\n" };
@@ -181,6 +271,18 @@ describe.sequential("cli turn start", () => {
       if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
         return { stdout: "" };
       }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "origin/main\n", exitCode: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-list" && args[1] === "--left-right" && args[2] === "--count") {
+        return { stdout: "1\t3\n", exitCode: 0 };
+      }
       if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main...origin/main [ahead 1, behind 3]\n" };
       }
@@ -212,6 +314,18 @@ describe.sequential("cli turn start", () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "fetch" && args[1] === "origin") {
         return { stdout: "" };
+      }
+      if (
+        cmd === "git" &&
+        args[0] === "rev-parse" &&
+        args[1] === "--abbrev-ref" &&
+        args[2] === "--symbolic-full-name" &&
+        args[3] === "main@{upstream}"
+      ) {
+        return { stdout: "origin/main\n", exitCode: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-list" && args[1] === "--left-right" && args[2] === "--count") {
+        return { stdout: "0\t0\n", exitCode: 0 };
       }
       if (cmd === "git" && args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main...origin/main\n" };

@@ -75,11 +75,6 @@ type BranchTrackingSnapshot = {
   upstreamGone: boolean;
 };
 
-type BranchTrackingDescriptor = {
-  upstream: string;
-  relation: string;
-};
-
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   const parsed = JSON.parse(stdout) as unknown;
   if (!Array.isArray(parsed)) {
@@ -377,34 +372,6 @@ function parseAheadBehindState(raw: string): { ahead: number; behind: number; up
   return { ahead, behind, upstreamGone };
 }
 
-function parseBranchTrackingDescriptor(raw: string): BranchTrackingDescriptor | null {
-  const descriptor = raw.trim();
-  if (!descriptor) return null;
-
-  const colonIndex = descriptor.indexOf(":");
-  const upstream = (colonIndex >= 0 ? descriptor.slice(0, colonIndex) : descriptor).trim();
-  const relation = colonIndex >= 0 ? descriptor.slice(colonIndex + 1).trim() : "";
-
-  if (!upstream) return null;
-  if (!/^[a-z0-9._/-]+$/i.test(upstream)) return null;
-
-  const hasSlash = upstream.includes("/");
-  if (!hasSlash && !relation) {
-    // Ambiguous token like "[behind 1]" in commit subject when no upstream exists.
-    return null;
-  }
-
-  if (relation) {
-    const relationTokens = relation.split(",").map((token) => token.trim().toLowerCase());
-    const relationValid = relationTokens.every(
-      (token) => token === "gone" || /^ahead\s+\d+$/.test(token) || /^behind\s+\d+$/.test(token),
-    );
-    if (!relationValid) return null;
-  }
-
-  return { upstream, relation };
-}
-
 function parseStatusTrackingSnapshot(statusOutput: string): BranchTrackingSnapshot | null {
   const firstLine = statusOutput.split(/\r?\n/)[0]?.trim() ?? "";
   const match = /^##\s+(.+)$/.exec(firstLine);
@@ -469,34 +436,80 @@ function parseBranchVvSnapshots(branchVvOutput: string): BranchTrackingSnapshot[
     const branch = normalized.split(/\s+/)[0]?.trim() ?? "";
     if (!branch || branch.startsWith("(")) continue;
 
-    let upstream: string | null = null;
-    let ahead = 0;
-    let behind = 0;
-    let upstreamGone = false;
-
-    const trackingMatch = /^\S+\s+\S+\s+\[([^\]]+)\](?:\s|$)/.exec(normalized);
-    if (trackingMatch) {
-      const descriptor = parseBranchTrackingDescriptor(trackingMatch[1]);
-      if (descriptor) {
-        upstream = descriptor.upstream;
-        const parsed = parseAheadBehindState(descriptor.relation);
-        ahead = parsed.ahead;
-        behind = parsed.behind;
-        upstreamGone = parsed.upstreamGone;
-      }
-    }
-
     snapshots.push({
       branch,
       current,
-      upstream,
-      ahead,
-      behind,
-      upstreamGone,
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      upstreamGone: false,
     });
   }
 
   return snapshots;
+}
+
+function parseRevListAheadBehind(raw: string): { ahead: number; behind: number } | null {
+  const [aheadRaw = "", behindRaw = ""] = raw.trim().split(/\s+/);
+  if (!aheadRaw || !behindRaw) return null;
+
+  const ahead = Number(aheadRaw);
+  const behind = Number(behindRaw);
+  if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null;
+
+  return {
+    ahead: Math.max(0, Math.trunc(ahead)),
+    behind: Math.max(0, Math.trunc(behind)),
+  };
+}
+
+async function resolveBranchTrackingSnapshot(
+  execaFn: ExecaFn,
+  branch: string,
+  current: boolean,
+): Promise<BranchTrackingSnapshot> {
+  const upstreamProbe = await execaFn("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${branch}@{upstream}`], {
+    stdio: "pipe",
+    reject: false,
+  });
+  const upstreamRaw = upstreamProbe.exitCode === 0 ? upstreamProbe.stdout.trim() : "";
+
+  if (!upstreamRaw || upstreamRaw.includes("@{upstream}")) {
+    return {
+      branch,
+      current,
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      upstreamGone: false,
+    };
+  }
+
+  const revList = await execaFn("git", ["rev-list", "--left-right", "--count", `${branch}...${upstreamRaw}`], {
+    stdio: "pipe",
+    reject: false,
+  });
+
+  if (revList.exitCode !== 0) {
+    return {
+      branch,
+      current,
+      upstream: upstreamRaw,
+      ahead: 0,
+      behind: 0,
+      upstreamGone: true,
+    };
+  }
+
+  const counts = parseRevListAheadBehind(revList.stdout);
+  return {
+    branch,
+    current,
+    upstream: upstreamRaw,
+    ahead: counts?.ahead ?? 0,
+    behind: counts?.behind ?? 0,
+    upstreamGone: false,
+  };
 }
 
 function buildPullCommandForUpstream(upstream: string | null): string {
@@ -530,19 +543,25 @@ async function enforceTurnStartRemoteGuard(execaFn: ExecaFn): Promise<void> {
 
   const statusTracking = parseStatusTrackingSnapshot(statusResult.stdout);
   const branchSnapshots = parseBranchVvSnapshots(branchResult.stdout);
-  const currentFromVv = branchSnapshots.find((snapshot) => snapshot.current) ?? null;
-  const currentBranch = statusTracking?.branch ?? currentFromVv?.branch ?? null;
+  const currentFromVv = branchSnapshots.find((snapshot) => snapshot.current)?.branch ?? null;
+  const currentBranch = statusTracking?.branch ?? currentFromVv ?? null;
   if (!currentBranch) {
     throw new Error("turn start: guard could not resolve current branch after `git status -sb`.");
   }
 
-  const currentSnapshot = branchSnapshots.find((snapshot) => snapshot.branch === currentBranch) ?? currentFromVv;
-  const mainSnapshot = branchSnapshots.find((snapshot) => snapshot.branch === "main") ?? null;
+  const hasMainBranch = branchSnapshots.some((snapshot) => snapshot.branch === "main");
+  const [currentResolved, mainResolved] = await Promise.all([
+    resolveBranchTrackingSnapshot(execaFn, currentBranch, true),
+    hasMainBranch && currentBranch !== "main" ? resolveBranchTrackingSnapshot(execaFn, "main", false) : Promise.resolve(null),
+  ]);
 
-  const currentUpstream = statusTracking?.upstream ?? currentSnapshot?.upstream ?? null;
-  const currentAhead = Math.max(statusTracking?.ahead ?? 0, currentSnapshot?.ahead ?? 0);
-  const currentBehind = Math.max(statusTracking?.behind ?? 0, currentSnapshot?.behind ?? 0);
-  const currentUpstreamGone = Boolean(statusTracking?.upstreamGone || currentSnapshot?.upstreamGone);
+  const currentHasStatusUpstream = Boolean(statusTracking?.upstream);
+  const currentUpstream = currentHasStatusUpstream ? statusTracking?.upstream ?? null : currentResolved.upstream;
+  const currentAhead = currentHasStatusUpstream ? statusTracking?.ahead ?? 0 : currentResolved.ahead;
+  const currentBehind = currentHasStatusUpstream ? statusTracking?.behind ?? 0 : currentResolved.behind;
+  const currentUpstreamGone = currentHasStatusUpstream
+    ? Boolean(statusTracking?.upstreamGone || currentResolved.upstreamGone)
+    : currentResolved.upstreamGone;
 
   const blockers: string[] = [];
   const remediation = new Set<string>();
@@ -567,17 +586,17 @@ async function enforceTurnStartRemoteGuard(execaFn: ExecaFn): Promise<void> {
     remediation.add(buildPullCommandForUpstream(currentUpstream));
   }
 
-  if (mainSnapshot && currentBranch !== "main" && mainSnapshot.behind > 0) {
-    if (mainSnapshot.ahead > 0) {
+  if (mainResolved && currentBranch !== "main" && mainResolved.upstream && mainResolved.behind > 0) {
+    if (mainResolved.ahead > 0) {
       blockers.push(
-        `- local 'main' diverged from '${mainSnapshot.upstream ?? "origin/main"}' (ahead ${mainSnapshot.ahead}, behind ${mainSnapshot.behind}).`,
+        `- local 'main' diverged from '${mainResolved.upstream}' (ahead ${mainResolved.ahead}, behind ${mainResolved.behind}).`,
       );
-      remediation.add(buildRebaseCommandForUpstream(mainSnapshot.upstream ?? "origin/main"));
+      remediation.add(buildRebaseCommandForUpstream(mainResolved.upstream));
     } else {
       blockers.push(
-        `- local 'main' is behind '${mainSnapshot.upstream ?? "origin/main"}' by ${mainSnapshot.behind} commit(s).`,
+        `- local 'main' is behind '${mainResolved.upstream}' by ${mainResolved.behind} commit(s).`,
       );
-      remediation.add(buildPullCommandForUpstream(mainSnapshot.upstream ?? "origin/main"));
+      remediation.add(buildPullCommandForUpstream(mainResolved.upstream));
     }
   }
 
