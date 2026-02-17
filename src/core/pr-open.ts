@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
+import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
 
 type ExecaFn = typeof execa;
 
@@ -46,6 +47,7 @@ export type PrOpenResult = {
   dryRun: boolean;
   body: string;
   title: string;
+  rationaleAutofilled: boolean;
 };
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
@@ -186,31 +188,52 @@ export function buildPrOpenBodyTemplate(params: {
   issueUrl: string | null;
   branch: string;
 }): string {
-  const lines = [
-    "## Summary",
-    `- Issue: #${params.issueId} ${params.issueTitle}`,
-    `- Branch: \`${params.branch}\``,
-  ];
-
+  const summaryLines = [`- Issue: #${params.issueId} ${params.issueTitle}`, `- Branch: \`${params.branch}\``];
   if (params.issueUrl) {
-    lines.push(`- Issue URL: ${params.issueUrl}`);
+    summaryLines.push(`- Issue URL: ${params.issueUrl}`);
   }
 
-  lines.push(
-    "",
-    "## Architecture decisions",
-    "- TODO: describe architecture decisions for this change.",
-    "",
-    "## Why these decisions were made",
-    "- TODO: explain rationale and trade-offs.",
-    "",
-    "## Alternatives considered / rejected",
-    "- TODO: list alternatives considered and why they were rejected.",
-    "",
-    `Fixes #${params.issueId}`,
-  );
+  return buildBodyWithRationale({
+    summaryLines,
+    issueId: params.issueId,
+    context: {
+      issueId: params.issueId,
+      issueTitle: params.issueTitle,
+      branch: params.branch,
+      mode: "pr-open",
+    },
+  });
+}
 
-  return lines.join("\n");
+async function readPullRequestBody(execaFn: ExecaFn, prNumber: number): Promise<string | null> {
+  const response = await runGhWithRetry(execaFn, ["pr", "view", String(prNumber), "--json", "body"], { stdio: "pipe" });
+  const row = parseJsonObject(response.stdout, "gh pr view");
+  return parseNullableString(row.body);
+}
+
+async function autofillExistingPullRequestRationale(params: {
+  execaFn: ExecaFn;
+  prNumber: number;
+  issueId: number;
+  issueTitle: string;
+  branch: string;
+  dryRun: boolean;
+}): Promise<boolean> {
+  if (params.dryRun) return false;
+
+  const currentBody = await readPullRequestBody(params.execaFn, params.prNumber);
+  if (!currentBody || !hasRationaleTodoPlaceholders(currentBody)) return false;
+
+  const result = autofillRationaleSections(currentBody, {
+    issueId: params.issueId,
+    issueTitle: params.issueTitle,
+    branch: params.branch,
+    mode: "pr-open",
+  });
+  if (!result.changed) return false;
+
+  await runGhWithRetry(params.execaFn, ["pr", "edit", String(params.prNumber), "--body", result.body], { stdio: "pipe" });
+  return true;
 }
 
 async function createPullRequest(params: {
@@ -328,6 +351,16 @@ export async function runPrOpenCommand(
       issueUrl: issue.url,
       branch,
     });
+    const rationaleAutofilled = options.dryRun
+      ? false
+      : await autofillExistingPullRequestRationale({
+          execaFn,
+          prNumber: openPr.number,
+          issueId,
+          issueTitle: issue.title,
+          branch,
+          dryRun: options.dryRun,
+        });
 
     return {
       issueId,
@@ -341,6 +374,7 @@ export async function runPrOpenCommand(
       dryRun: options.dryRun,
       title,
       body,
+      rationaleAutofilled,
     };
   }
 
@@ -367,5 +401,6 @@ export async function runPrOpenCommand(
     dryRun: options.dryRun,
     title: created.title,
     body: created.body,
+    rationaleAutofilled: false,
   };
 }

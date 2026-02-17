@@ -83,6 +83,22 @@ function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   return parsed.filter((value): value is JsonRecord => typeof value === "object" && value !== null);
 }
 
+function parseJsonObject(stdout: string, context: string): JsonRecord {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${context}: expected object response`);
+  }
+  return parsed as JsonRecord;
+}
+
+function parseNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+function parsePositiveInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function parseLabelNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -304,6 +320,36 @@ async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string):
   return parsePullRequestSnapshots(response.stdout, "gh pr list");
 }
 
+async function findOpenPullRequestNumberByBranch(execaFn: ExecaFn, branch: string): Promise<number | null> {
+  const response = await runGhWithRetry(
+    execaFn,
+    ["pr", "list", "--head", branch, "--state", "open", "--json", "number"],
+    {
+      stdio: "pipe",
+    },
+  );
+
+  const rows = parseJsonArray(response.stdout, "gh pr list");
+  for (const row of rows) {
+    const number = parsePositiveInt(row.number);
+    if (number) return number;
+  }
+
+  return null;
+}
+
+async function resolvePullRequestHeadSha(execaFn: ExecaFn, prNumber: number): Promise<string> {
+  const viewed = await runGhWithRetry(execaFn, ["pr", "view", String(prNumber), "--json", "headRefOid"], {
+    stdio: "pipe",
+  });
+  const row = parseJsonObject(viewed.stdout, "gh pr view");
+  const headSha = parseNullableString(row.headRefOid);
+  if (!headSha) {
+    throw new Error(`postflight --apply: unable to resolve headRefOid for PR #${prNumber}`);
+  }
+  return headSha;
+}
+
 async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<string> {
   const response = await execaFn("git", ["rev-parse", ref], { stdio: "pipe" });
   const head = response.stdout.trim();
@@ -311,6 +357,32 @@ async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<stri
     throw new Error(`unable to resolve git ref HEAD sha for '${ref}'`);
   }
   return head;
+}
+
+async function enforcePostflightApplyReviewGate(params: {
+  execaFn: ExecaFn;
+  issueId: string;
+  branch: string;
+  dryRun: boolean;
+}): Promise<void> {
+  const { execaFn, issueId, branch, dryRun } = params;
+  if (dryRun) return;
+
+  const normalizedBranch = branch.trim();
+  if (!normalizedBranch) return;
+
+  const prNumber = await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
+  if (!prNumber) return;
+
+  const repo = await resolveRepoNameWithOwner(execaFn);
+  const headSha = await resolvePullRequestHeadSha(execaFn, prNumber);
+  const hasReview = await hasReviewForHead(execaFn, repo, prNumber, headSha);
+  if (hasReview) return;
+
+  const shortHead = headSha.slice(0, 12);
+  throw new Error(
+    `postflight --apply: review gate missing for branch '${normalizedBranch}' HEAD ${shortHead} on PR #${prNumber}. Run: node dist/cli.cjs review --issue ${issueId}`,
+  );
 }
 
 async function resolveCurrentBranchName(execaFn: ExecaFn): Promise<string> {
@@ -1025,6 +1097,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           } else {
             console.log(`pr open: already open ${numberText} ${urlText}`);
           }
+          if (result.rationaleAutofilled) {
+            console.log("pr open: rationale sections autofilled in existing PR body.");
+          }
         }
 
         const skipReviewGate = Boolean(opts.skipReviewGate);
@@ -1090,6 +1165,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           },
           execaFn,
         );
+        console.log(`pr open: review termination=${reviewResult.terminationReason}`);
+        if (reviewResult.rationaleAutofilled) {
+          console.log("pr open: rationale sections autofilled in existing PR body.");
+        }
         console.log(
           `pr open: review gate complete attempts=${reviewResult.attemptsUsed} unresolved=${reviewResult.unresolvedFindings.length}`,
         );
@@ -1285,6 +1364,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           console.log(`review: provider_auto_heal=${result.providerHealedFromRuntime}->${result.provider}`);
         }
         console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
+        console.log(`review: termination=${result.terminationReason}`);
+        if (result.rationaleAutofilled) {
+          console.log("review: rationale sections autofilled in existing PR body.");
+        }
 
         if (result.prNumber) {
           console.log(`review: pr=#${result.prNumber}`);
@@ -1432,6 +1515,13 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           process.exitCode = 1;
           return;
         }
+
+        await enforcePostflightApplyReviewGate({
+          execaFn,
+          issueId,
+          branch: parsed.data.work.branch,
+          dryRun: Boolean(opts.dryRun),
+        });
 
         const updates = parsed.data.tracker_updates ?? [];
         const cmds = buildTrackerCommands(issueId, updates);

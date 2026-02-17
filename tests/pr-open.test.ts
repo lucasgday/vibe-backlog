@@ -34,6 +34,7 @@ describe("pr open core", () => {
     expect(result.prNumber).toBeNull();
     expect(result.prUrl).toBeNull();
     expect(result.body).toContain("Fixes #6");
+    expect(result.body).not.toContain("TODO:");
     expect(
       execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",

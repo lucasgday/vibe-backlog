@@ -355,7 +355,9 @@ describe("review PR helpers", () => {
         number: 99,
         url: "https://example.test/pull/99",
         headRefOid: "abc123",
+        body: null,
         created: false,
+        rationaleAutofilled: false,
       },
       summaryBody: "summary",
       findings: [
@@ -424,7 +426,9 @@ describe("review PR helpers", () => {
         number: 99,
         url: "https://example.test/pull/99",
         headRefOid: "stale-sha-should-not-be-used",
+        body: null,
         created: false,
+        rationaleAutofilled: false,
       },
       summaryBody: "summary",
       findings: [
