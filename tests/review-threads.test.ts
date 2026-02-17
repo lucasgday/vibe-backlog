@@ -224,4 +224,38 @@ describe("review threads resolve core", () => {
     expect(result.failed).toBe(1);
     expect(result.items[0]?.failed).toBe(true);
   });
+
+  it("does not require resolving current branch when --pr is provided", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        throw new Error("should not resolve current branch when prNumber is set");
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "abcdef1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([buildThreadPayload({ id: "PRRT_1", isResolved: false })]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await resolveReviewThreads(
+      {
+        prNumber: 51,
+        threadIds: ["PRRT_1"],
+        allUnresolved: false,
+        bodyOverride: null,
+        dryRun: true,
+      },
+      execaMock as never,
+    );
+
+    expect(result.prNumber).toBe(51);
+    expect(result.branch).toBe(null);
+    expect(result.planned).toBe(1);
+  });
 });

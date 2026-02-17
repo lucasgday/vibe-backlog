@@ -454,19 +454,30 @@ export async function hasReviewForHead(
   const target = headSha.trim().toLowerCase();
   const targetPolicy = normalizePolicyKey(options?.policyKey);
   const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/issues/${prNumber}/comments`, "gh issue comments");
+  let foundHeadMarker = false;
+  let foundPolicyMarkersForHead = false;
+  let foundMatchingPolicyMarker = false;
 
   for (const row of rows) {
     const body = parseNullableString(row.body);
     if (!body || !body.includes(REVIEW_SUMMARY_MARKER)) continue;
     const heads = extractReviewHeadMarkers(body);
     if (!heads.has(target)) continue;
+    foundHeadMarker = true;
     if (!targetPolicy) return true;
 
     const policyMarkers = extractReviewPolicyMarkers(body);
-    if (!policyMarkers.size || policyMarkers.has(targetPolicy)) return true;
+    if (!policyMarkers.size) continue;
+    foundPolicyMarkersForHead = true;
+    if (policyMarkers.has(targetPolicy)) {
+      foundMatchingPolicyMarker = true;
+    }
   }
 
-  return false;
+  if (!targetPolicy) return false;
+  if (!foundHeadMarker) return false;
+  if (!foundPolicyMarkersForHead) return true;
+  return foundMatchingPolicyMarker;
 }
 
 export async function postReviewGateSkipComment(params: {

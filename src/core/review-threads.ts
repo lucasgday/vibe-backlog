@@ -468,8 +468,12 @@ export async function resolveReviewThreads(
   const threadIds = normalizeThreadIds(options.threadIds);
   const targetMode: ReviewThreadTargetMode = options.allUnresolved ? "all-unresolved" : "thread-id";
 
-  const branch = await resolveCurrentBranch(execaFn);
-  const prNumber = options.prNumber ?? (await resolveOpenPrNumberForBranch(execaFn, branch));
+  let branch: string | null = null;
+  let prNumber = options.prNumber;
+  if (prNumber === null || prNumber === undefined) {
+    branch = await resolveCurrentBranch(execaFn);
+    prNumber = await resolveOpenPrNumberForBranch(execaFn, branch);
+  }
 
   const repoSlug = await resolveRepoNameWithOwner(execaFn);
   const { owner, repo } = splitOwnerRepo(repoSlug);

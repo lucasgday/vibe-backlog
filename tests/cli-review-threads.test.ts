@@ -184,4 +184,32 @@ describe.sequential("cli review threads resolve", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("resolved=1"))).toBe(true);
   });
+
+  it("does not require current branch in CLI when --pr is provided", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        throw new Error("should not resolve branch with explicit --pr");
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "abcdef1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return { stdout: buildThreadsGraphqlResponse([buildThread("PRRT_1")]) };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "threads", "resolve", "--pr", "51", "--thread-id", "PRRT_1", "--dry-run"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("pr=#51"))).toBe(true);
+  });
 });

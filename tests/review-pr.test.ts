@@ -155,6 +155,40 @@ describe("review PR helpers", () => {
     );
   });
 
+  it("does not allow legacy marker to bypass policy mismatch when mixed markers coexist", async () => {
+    const matchingPolicyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const mismatchedPolicyKey = buildReviewPolicyKey({
+      autofix: false,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const legacyBody = buildReviewSummaryBody("legacy summary", "abc123def");
+    const policyBody = buildReviewSummaryBody("policy summary", "abc123def", { policyKey: mismatchedPolicyKey });
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            { id: 1, body: legacyBody },
+            { id: 2, body: policyBody },
+          ]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey: matchingPolicyKey })).toBe(
+      false,
+    );
+  });
+
   it("posts review gate skip comment once per head marker", async () => {
     const comments: Array<{ id: number; body: string }> = [];
     let nextId = 1;
