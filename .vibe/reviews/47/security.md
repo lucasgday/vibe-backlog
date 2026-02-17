@@ -41,3 +41,15 @@ Security posture is improved via local scanning + CI enforcement, but the workfl
 
 ### Findings
 - [P2] CI installs gitleaks without checksum/signature verification (.github/workflows/gitleaks.yml:43)
+
+## Run 2026-02-17T20:52:22.662Z
+- run_id: issue-47-pr-51-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Security posture improved versus the previous iteration: CI now verifies downloaded gitleaks tarball checksums before installation, and local scan behavior preserves explicit warn/fail enforcement semantics.
+
+### Findings
+- none

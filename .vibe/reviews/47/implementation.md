@@ -43,3 +43,15 @@ The feature is implemented end-to-end (core module, CLI command, preflight integ
 
 ### Findings
 - [P2] Scanner availability probe depends on zsh (src/core/security-scan.ts:224)
+
+## Run 2026-02-17T20:52:22.661Z
+- run_id: issue-47-pr-51-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The follow-up changes address the prior implementation gaps: scanner availability no longer depends on zsh, the CLI/preflight flow remains consistent, and behavior matches the documented policy model.
+
+### Findings
+- none

@@ -49,3 +49,15 @@ Test coverage is strong for policy resolution, CLI wiring, and preflight output,
 
 ### Findings
 - [P3] Missing test for probe behavior when shell binary is unavailable (tests/security-scan.test.ts:90)
+
+## Run 2026-02-17T20:52:22.663Z
+- run_id: issue-47-pr-51-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Quality coverage is adequate for the updated behavior, including the new missing-executable probe path and adjusted dry-run expectations; test suite passed after updates.
+
+### Findings
+- none
