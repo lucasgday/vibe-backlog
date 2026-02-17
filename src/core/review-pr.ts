@@ -3,6 +3,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
+import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
 
 type ExecaFn = typeof execa;
 
@@ -29,7 +30,9 @@ export type ReviewPrSnapshot = {
   number: number;
   url: string | null;
   headRefOid: string | null;
+  body: string | null;
   created: boolean;
+  rationaleAutofilled: boolean;
 };
 
 export type ReviewPublishResult = {
@@ -179,7 +182,9 @@ function findFirstPullRequestRow(rows: JsonRecord[]): ReviewPrSnapshot | null {
       number,
       url: parseNullableString(row.url),
       headRefOid: parseNullableString(row.headRefOid),
+      body: parseNullableString(row.body),
       created: false,
+      rationaleAutofilled: false,
     };
   }
   return null;
@@ -190,22 +195,23 @@ function buildAutoPrTitle(issueId: number, issueTitle: string): string {
 }
 
 function buildAutoPrBody(issueId: number, branch: string, issueTitle: string): string {
-  return [
-    "## Summary",
-    `- Auto-created by \`vibe review\` for branch \`${branch}\`.`,
-    `- Target issue: #${issueId} (${issueTitle}).`,
-    "",
-    "## Architecture decisions",
-    "- TODO: describe decisions made in this change.",
-    "",
-    "## Why these decisions",
-    "- TODO: explain rationale and trade-offs.",
-    "",
-    "## Alternatives considered",
-    "- TODO: list alternatives rejected and why.",
-    "",
-    `Fixes #${issueId}`,
-  ].join("\n");
+  return buildBodyWithRationale({
+    summaryLines: [
+      `- Auto-created by \`vibe review\` for branch \`${branch}\`.`,
+      `- Target issue: #${issueId} (${issueTitle}).`,
+    ],
+    issueId,
+    context: {
+      issueId,
+      issueTitle,
+      branch,
+      mode: "review",
+    },
+    headings: {
+      why: "## Why these decisions",
+      alternatives: "## Alternatives considered",
+    },
+  });
 }
 
 export async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
@@ -259,12 +265,31 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
 
   const listed = await runGhWithRetry(
     execaFn,
-    ["pr", "list", "--head", branch, "--state", "open", "--json", "number,url,headRefOid"],
+    ["pr", "list", "--head", branch, "--state", "open", "--json", "number,url,headRefOid,body"],
     { stdio: "pipe" },
   );
   const rows = parseJsonArray(listed.stdout, "gh pr list");
   const open = findFirstPullRequestRow(rows);
-  if (open) return open;
+  if (open) {
+    if (!dryRun && open.body && hasRationaleTodoPlaceholders(open.body)) {
+      const nextBodyResult = autofillRationaleSections(open.body, {
+        issueId,
+        issueTitle,
+        branch,
+        mode: "review",
+      });
+      if (nextBodyResult.changed) {
+        await runGhWithRetry(execaFn, ["pr", "edit", String(open.number), "--body", nextBodyResult.body], {
+          stdio: "pipe",
+        });
+        return {
+          ...open,
+          rationaleAutofilled: true,
+        };
+      }
+    }
+    return open;
+  }
 
   const title = buildAutoPrTitle(issueId, issueTitle);
   const body = buildAutoPrBody(issueId, branch, issueTitle);
@@ -274,7 +299,9 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
       number: 0,
       url: null,
       headRefOid: null,
+      body: null,
       created: false,
+      rationaleAutofilled: false,
     };
   }
 
@@ -301,7 +328,9 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
     number: viewedNumber,
     url: parseNullableString(viewedRow.url) ?? url,
     headRefOid: parseNullableString(viewedRow.headRefOid),
+    body: null,
     created: true,
+    rationaleAutofilled: false,
   };
 }
 

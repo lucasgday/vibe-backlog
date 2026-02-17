@@ -12,6 +12,7 @@ import {
 import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from "./review-provider";
 import {
   buildReviewSummaryBody,
+  computeFindingFingerprint,
   createReviewFollowUpIssue,
   fetchIssueSnapshot,
   publishReviewToPullRequest,
@@ -29,6 +30,13 @@ export const REVIEW_INVALID_TURN_EXIT_CODE = 3;
 export const REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE = 4;
 export const REVIEW_REMEDIATION = "Run: node dist/cli.cjs review --issue <n> (or: node dist/cli.cjs turn start --issue <n>)";
 type ExecaFn = typeof execa;
+
+export type ReviewTerminationReason =
+  | "completed"
+  | "max-attempts"
+  | "no-autofix"
+  | "no-autofix-changes"
+  | "same-fingerprints";
 
 export type ReviewCommandOptions = {
   issueOverride?: string | number | null;
@@ -62,6 +70,8 @@ export type ReviewCommandResult = {
   resumeAttempted: boolean;
   resumeFallback: boolean;
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
+  terminationReason: ReviewTerminationReason;
+  rationaleAutofilled: boolean;
 };
 
 type ReviewRunContext = {
@@ -175,6 +185,17 @@ async function isWorkingTreeClean(execaFn: ExecaFn): Promise<boolean> {
   return response.stdout.trim() === "";
 }
 
+async function hasTrackedWorkingTreeChanges(execaFn: ExecaFn): Promise<boolean> {
+  const response = await execaFn("git", ["status", "--porcelain"], { stdio: "pipe" });
+  for (const rawLine of response.stdout.split(/\r?\n/)) {
+    const line = rawLine.trimStart();
+    if (!line) continue;
+    if (line.startsWith("?? ")) continue;
+    return true;
+  }
+  return false;
+}
+
 async function resolveReviewRunContext(
   execaFn: ExecaFn,
   issueOverride: string | number | null | undefined,
@@ -268,6 +289,18 @@ function formatFindingLine(finding: ReviewFinding): string {
   return `- [${finding.severity}] ${finding.title}${location}`;
 }
 
+function buildFindingsFingerprintKey(findings: ReviewFinding[]): string {
+  if (!findings.length) return "";
+  return findings.map((finding) => computeFindingFingerprint(finding)).sort().join(",");
+}
+
+function formatTermination(terminationReason: ReviewTerminationReason): string {
+  if (terminationReason === "completed" || terminationReason === "max-attempts") {
+    return terminationReason;
+  }
+  return `early-stop (reason=${terminationReason})`;
+}
+
 function buildOutcomeSummaryMarkdown(params: {
   issueId: number;
   issueTitle: string;
@@ -282,6 +315,7 @@ function buildOutcomeSummaryMarkdown(params: {
   resumeAttempted: boolean;
   resumeFallback: boolean;
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
+  terminationReason: ReviewTerminationReason;
 }): string {
   const severity = summarizeSeverity(params.unresolvedFindings);
   const lines = [
@@ -292,6 +326,7 @@ function buildOutcomeSummaryMarkdown(params: {
     `- Resume: attempted=${params.resumeAttempted ? "yes" : "no"}, fallback=${params.resumeFallback ? "yes" : "no"}`,
     `- Run ID: ${params.output.run_id}`,
     `- Attempts: ${params.attemptsUsed}/${params.maxAttempts}`,
+    `- Termination: ${formatTermination(params.terminationReason)}`,
     `- Unresolved findings: ${params.unresolvedFindings.length}`,
     `- Severity: P0=${severity.P0}, P1=${severity.P1}, P2=${severity.P2}, P3=${severity.P3}`,
   ];
@@ -435,6 +470,8 @@ export async function runReviewCommand(
   let resumeFallback = false;
   let providerRunner: "command" | "codex" | "claude" | "gemini" =
     executionPlan.mode === "command" ? "command" : executionPlan.provider;
+  let terminationReason: ReviewTerminationReason = "max-attempts";
+  let previousFingerprintKey: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attemptsUsed = attempt;
@@ -485,8 +522,31 @@ export async function runReviewCommand(
 
     const findings = flattenReviewFindings(output);
     if (!findings.length) {
+      terminationReason = "completed";
       break;
     }
+
+    if (attempt >= maxAttempts) {
+      terminationReason = "max-attempts";
+      break;
+    }
+
+    if (!options.autofix || !output.autofix.applied) {
+      terminationReason = "no-autofix";
+      break;
+    }
+
+    if (output.autofix.changed_files.length === 0) {
+      terminationReason = "no-autofix-changes";
+      break;
+    }
+
+    const currentFingerprintKey = buildFindingsFingerprintKey(findings);
+    if (previousFingerprintKey !== null && currentFingerprintKey === previousFingerprintKey) {
+      terminationReason = "same-fingerprints";
+      break;
+    }
+    previousFingerprintKey = currentFingerprintKey;
   }
 
   if (!finalOutput) {
@@ -510,6 +570,7 @@ export async function runReviewCommand(
     resumeAttempted,
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
+    terminationReason,
   });
 
   if (unresolvedFindings.length > 0) {
@@ -539,11 +600,24 @@ export async function runReviewCommand(
     resumeAttempted,
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
+    terminationReason,
   });
+
+  if (!options.dryRun) {
+    await appendReviewSummaryToPostflight({
+      summary,
+      issueId: context.issueId,
+      branch: context.branch,
+    });
+  }
 
   let committed = false;
   if (!options.dryRun && options.autopush) {
     committed = await commitAndPushChanges(execaFn, finalOutput.run_id);
+    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesRemain) {
+      throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
+    }
   }
 
   let summaryHeadSha: string | null = null;
@@ -561,14 +635,6 @@ export async function runReviewCommand(
       summaryBody: buildReviewSummaryBody(summary, summaryHeadSha),
       findings: unresolvedFindings,
       dryRun: options.dryRun,
-    });
-  }
-
-  if (!options.dryRun) {
-    await appendReviewSummaryToPostflight({
-      summary,
-      issueId: context.issueId,
-      branch: context.branch,
     });
   }
 
@@ -591,5 +657,7 @@ export async function runReviewCommand(
     resumeAttempted,
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
+    terminationReason,
+    rationaleAutofilled: pr.rationaleAutofilled,
   };
 }

@@ -1025,6 +1025,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           } else {
             console.log(`pr open: already open ${numberText} ${urlText}`);
           }
+          if (result.rationaleAutofilled) {
+            console.log("pr open: rationale sections autofilled in existing PR body.");
+          }
         }
 
         const skipReviewGate = Boolean(opts.skipReviewGate);
@@ -1090,6 +1093,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           },
           execaFn,
         );
+        console.log(`pr open: review termination=${reviewResult.terminationReason}`);
+        if (reviewResult.rationaleAutofilled) {
+          console.log("pr open: rationale sections autofilled in existing PR body.");
+        }
         console.log(
           `pr open: review gate complete attempts=${reviewResult.attemptsUsed} unresolved=${reviewResult.unresolvedFindings.length}`,
         );
@@ -1285,6 +1292,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           console.log(`review: provider_auto_heal=${result.providerHealedFromRuntime}->${result.provider}`);
         }
         console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
+        console.log(`review: termination=${result.terminationReason}`);
+        if (result.rationaleAutofilled) {
+          console.log("review: rationale sections autofilled in existing PR body.");
+        }
 
         if (result.prNumber) {
           console.log(`review: pr=#${result.prNumber}`);

@@ -118,7 +118,7 @@ describe.sequential("cli pr open", () => {
         expect(body).toContain("## Architecture decisions");
         expect(body).toContain("## Why these decisions were made");
         expect(body).toContain("## Alternatives considered / rejected");
-        expect(body).toContain("TODO:");
+        expect(body).not.toContain("TODO:");
         expect(body).toContain("Fixes #6");
         return { stdout: "https://example.test/pull/60\n" };
       }
@@ -185,6 +185,13 @@ describe.sequential("cli pr open", () => {
           }),
         };
       }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body\n\n## Architecture decisions\n- done\n\n## Why these decisions were made\n- done",
+          }),
+        };
+      }
       if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
@@ -221,6 +228,106 @@ describe.sequential("cli pr open", () => {
         ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",
       ),
     ).toBe(false);
+  });
+
+  it("autofills rationale placeholders on existing PR body", async () => {
+    await writeTurnContext({
+      issue_id: 6,
+      branch: "issue-6-vibe-pr-open",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "vibe pr open",
+    });
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 66,
+              title: "feat: add vibe pr open command",
+              url: "https://example.test/pull/66",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat: add vibe pr open command with issue linkage",
+            url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: [
+              "## Summary",
+              "- Existing",
+              "",
+              "## Architecture decisions",
+              "- TODO: fill architecture",
+              "",
+              "## Why these decisions were made",
+              "- TODO: fill why",
+              "",
+              "## Alternatives considered / rejected",
+              "- TODO: fill alternatives",
+              "",
+              "## Extra section",
+              "- keep me",
+            ].join("\n"),
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "edit") {
+        const bodyIndex = args.findIndex((entry) => entry === "--body");
+        const body = bodyIndex >= 0 ? String(args[bodyIndex + 1] ?? "") : "";
+        expect(body).toContain("## Architecture decisions");
+        expect(body).toContain("## Why these decisions were made");
+        expect(body).toContain("## Alternatives considered / rejected");
+        expect(body).not.toContain("TODO:");
+        expect(body).toContain("## Extra section");
+        return { stdout: "" };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
+        return { stdout: "abc123def\n" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && /repos\/acme\/demo\/issues\/66\/comments\?per_page=100&page=1/.test(String(args[1] ?? ""))) {
+        return { stdout: "[]" };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/issues/66/comments"
+      ) {
+        return { stdout: JSON.stringify({ id: 2 }) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open", "--skip-review-gate"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("pr open: rationale sections autofilled in existing PR body."))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "edit",
+      ),
+    ).toBe(true);
   });
 
   it("allows explicit args without active turn", async () => {
@@ -370,6 +477,13 @@ describe.sequential("cli pr open", () => {
           stdout: JSON.stringify({
             title: "feat: add vibe pr open command with issue linkage",
             url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body\n\n## Architecture decisions\n- done",
           }),
         };
       }
@@ -525,6 +639,13 @@ describe.sequential("cli pr open", () => {
           }),
         };
       }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body",
+          }),
+        };
+      }
       if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
@@ -579,6 +700,13 @@ describe.sequential("cli pr open", () => {
           stdout: JSON.stringify({
             title: "target branch issue",
             url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body",
           }),
         };
       }
@@ -638,6 +766,13 @@ describe.sequential("cli pr open", () => {
           stdout: JSON.stringify({
             title: "target branch issue",
             url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body",
           }),
         };
       }
