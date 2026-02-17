@@ -47,3 +47,15 @@ Coverage is good for happy-path and missing-marker gate behavior, but one high-v
 
 ### Findings
 - [P3] Missing test for non-local branch with open PR in postflight gate (tests/cli-postflight.test.ts:356)
+
+## Run 2026-02-17T02:29:20.059Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate-fix
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Regression coverage is adequate for missing-marker, marker-present, and non-local-branch scenarios; tests validate the new headRefOid path and guard behavior.
+
+### Findings
+- none

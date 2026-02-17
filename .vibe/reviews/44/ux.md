@@ -35,3 +35,15 @@ CLI messages remain clear and actionable; no user-facing wording regressions wer
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:29:20.059Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate-fix
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+User-facing messaging remains clear and actionable, including explicit remediation when review gate is missing.
+
+### Findings
+- none

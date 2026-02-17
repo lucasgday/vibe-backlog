@@ -41,3 +41,15 @@ The new postflight review gate is directionally correct and enforces the intende
 
 ### Findings
 - [P2] Postflight review gate depends on local branch ref availability (src/cli-program.ts:354)
+
+## Run 2026-02-17T02:29:20.058Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate-fix
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Postflight apply review-gate now resolves PR head SHA from GitHub metadata instead of local branch refs, removing the non-local-branch failure mode while preserving gate semantics.
+
+### Findings
+- none

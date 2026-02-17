@@ -36,3 +36,15 @@ No direct security regressions were identified in this diff. The gate fails clos
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:29:20.059Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate-fix
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new security regressions identified; gate behavior remains fail-closed when review evidence is missing and does not expand auth or secret-handling surfaces.
+
+### Findings
+- none
