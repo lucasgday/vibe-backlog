@@ -1,6 +1,7 @@
 # vibe-backlog
 
 CLI-first project workflow for solo builders using GitHub issues + postflight artifacts.
+One-liner: `vibe-backlog` turns issue context, git state, and postflight artifacts into one repeatable development loop.
 
 This project has two usage modes:
 
@@ -132,6 +133,11 @@ This repo supports LLM-driven development. The file `AGENTS.md` is the agent con
 - Multi-pass reviews (Security/Quality/UX/Ops)
 
 LLMs (Codex, Claude, etc.) must read and follow `AGENTS.md` before making changes.
+
+## Security
+
+- Vulnerability reporting policy: `SECURITY.md`
+- CI log/artifact hardening policy: `.github/CI_SECURITY.md`
 
 ## Canonical commands (recommended)
 
