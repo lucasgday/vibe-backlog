@@ -30,3 +30,16 @@ Implementation is complete and aligned with issue scope: dedupe is now policy-aw
 
 ## Findings
 - none
+
+## Run 2026-02-17T22:28:55.146Z
+- run_id: issue-53-pr-54-attempt-1
+- attempt: 1/5
+- findings: 2
+- autofix_applied: no
+
+### Summary
+Core scope is implemented, but two correctness regressions remain in policy-aware dedupe and explicit-PR thread resolution flow.
+
+### Findings
+- [P2] Policy-aware gate can be bypassed by legacy summary comments (src/core/review-pr.ts:466)
+- [P2] `review threads resolve --pr <n>` still hard-depends on current branch (src/core/review-threads.ts:471)

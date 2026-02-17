@@ -35,3 +35,15 @@ Coverage is strong for both new capabilities and critical edge-cases (policy mis
 
 ## Findings
 - none
+
+## Run 2026-02-17T22:28:55.147Z
+- run_id: issue-53-pr-54-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Test coverage is strong for the new command paths, but it does not currently guard the mixed-marker ordering case that triggers the policy-bypass regression.
+
+### Findings
+- [P3] Missing regression test for mixed legacy+policy marker coexistence (tests/review-pr.test.ts:108)
