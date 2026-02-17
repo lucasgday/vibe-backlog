@@ -21,3 +21,15 @@ Operational behavior is more deterministic: artifacts are persisted before final
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:27:19.404Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operationally this improves process control by enforcing a review marker before tracker mutations via `postflight --apply`.
+
+### Findings
+- none

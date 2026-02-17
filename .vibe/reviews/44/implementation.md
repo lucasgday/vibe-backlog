@@ -29,3 +29,15 @@ Review flow hardening is coherent: rationale section generation/autofill is cent
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:27:19.401Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The new postflight review gate is directionally correct and enforces the intended workflow, but it currently relies on resolving the branch head from local git state, which can break valid apply flows when the branch is not present locally.
+
+### Findings
+- [P2] Postflight review gate depends on local branch ref availability (src/cli-program.ts:354)

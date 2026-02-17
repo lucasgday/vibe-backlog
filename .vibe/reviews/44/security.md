@@ -24,3 +24,15 @@ No direct security regressions identified; rationale autofill is section-scoped,
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:27:19.402Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No direct security regressions were identified in this diff. The gate fails closed when review evidence is missing and does not introduce new auth/secrets surfaces.
+
+### Findings
+- none

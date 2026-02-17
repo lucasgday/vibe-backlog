@@ -35,3 +35,15 @@ Test coverage for the new behavior is strong (template TODO removal, rationale a
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:27:19.403Z
+- run_id: issue-44-pr-45-attempt-1-postflight-gate
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage is good for happy-path and missing-marker gate behavior, but one high-value edge case is still untested.
+
+### Findings
+- [P3] Missing test for non-local branch with open PR in postflight gate (tests/cli-postflight.test.ts:356)
