@@ -105,6 +105,8 @@ For every feature:
 ### 5) PR (preferred)
 - Open a PR linked to the issue:
   - Include: `Fixes #<N>` in the PR body/title so GitHub can auto-close on merge.
+- Prefer `node dist/cli.cjs pr open` so review gate is enforced automatically for current `HEAD`.
+- Use `--skip-review-gate` only for explicit contingencies; it leaves an auditable marker comment in the PR.
 - Ask the user for the GitHub issue number if missing.
 - End with: **"crear PR — cuál es el # del gh issue?"** (if not already known)
 

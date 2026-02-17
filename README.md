@@ -117,8 +117,8 @@ vibe postflight --apply
 `preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
-`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create follow-up issues when unresolved findings remain.
-`pr open` creates/reuses an open PR for the issue and injects deterministic architecture/rationale sections plus `Fixes #<issue>`.
+`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain.
+`pr open` creates/reuses an open PR for the issue, injects deterministic architecture/rationale sections plus `Fixes #<issue>`, and enforces a review gate by HEAD marker (unless explicitly skipped).
 `tracker reconcile` fills missing `module:*` labels and milestone metadata using repo-specific taxonomy/history, with interactive or flag-based fallbacks.
 
 ## Agent workflow (AGENTS.md)
@@ -179,7 +179,7 @@ vibe review [options]
 
 Options:
 
-- `--issue <n>`: issue override (defaults to active turn issue).
+- `--issue <n>`: issue override (highest priority).
 - `--agent-provider <auto|codex|claude|gemini|command>`: provider selection (default `auto`).
 - `--agent-cmd "<cmd>"`: explicit external command (highest priority). Fallback: `VIBE_REVIEW_AGENT_CMD`.
 - `--dry-run`: run planning path without mutating git/GitHub.
@@ -189,6 +189,17 @@ Options:
 - `--max-attempts <n>`: max retry attempts (default `5`).
 - `--strict`: exit non-zero when unresolved findings remain after final attempt.
 - `--followup-label bug|enhancement`: override follow-up issue label.
+
+Issue/base context resolution (without requiring an active turn):
+
+1. `--issue <n>` (if provided)
+2. valid active turn
+3. branch inference:
+   - `issue-<n>-...`
+   - `<feat|fix|chore|docs|refactor|test>/<n>-...`
+4. open PR body autoclose references (`Fixes #<n>`, `Closes #<n>`, `Resolves #<n>`)
+
+If issue resolution still fails, command exits with remediation to provide `--issue <n>`.
 
 Provider resolution (highest priority first):
 
@@ -211,3 +222,27 @@ Codex same-session behavior:
 - If `CODEX_THREAD_ID` exists, `vibe review` first tries `codex exec resume <thread_id>`.
 - If resume fails or returns invalid JSON, it falls back to external non-interactive Codex execution.
 - This is best-effort only; resume unavailability does not fail the run by itself.
+
+## `vibe pr open` command reference
+
+```bash
+vibe pr open [options]
+```
+
+Options:
+
+- `--issue <n>`: issue override.
+- `--branch <name>`: branch override.
+- `--base <name>`: base branch override.
+- `--dry-run`: print PR payload plan only.
+- `--skip-review-gate`: bypass review gate and publish an auditable PR comment marker.
+
+Review gate behavior:
+
+- Default `pr open` enforces review execution for the target PR branch `HEAD` (resolved from `--branch`/turn/current branch).
+- Dedupe is marker-based on PR comments: `<!-- vibe:review-summary -->` + `<!-- vibe:review-head:<sha> -->`.
+- If the target branch HEAD already has a summary marker, gate is satisfied and review is not re-run.
+- If marker is missing, `pr open` auto-runs `vibe review` (full profile, non-strict).
+- For non-dry-run gate execution, target branch must be checked out before auto-review can run.
+- If `--skip-review-gate` is set, no auto-review runs; PR receives `<!-- vibe:review-gate-skipped -->`.
+- If `pr open` creates a PR and auto-review fails, the PR remains open and command exits with error.

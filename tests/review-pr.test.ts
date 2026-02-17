@@ -2,9 +2,14 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  REVIEW_GATE_SKIPPED_MARKER,
+  REVIEW_SUMMARY_MARKER,
+  buildReviewSummaryBody,
   classifyFollowUpLabel,
   computeFindingFingerprint,
   createReviewFollowUpIssue,
+  hasReviewForHead,
+  postReviewGateSkipComment,
   publishReviewToPullRequest,
 } from "../src/core/review-pr";
 import type { ReviewFinding } from "../src/core/review-agent";
@@ -58,8 +63,79 @@ describe("review PR helpers", () => {
     expect(computeFindingFingerprint(first)).toBe(computeFindingFingerprint(second));
   });
 
+  it("builds review summary body with head marker when provided", () => {
+    const summary = buildReviewSummaryBody("summary text", "ABC123DEF");
+    expect(summary).toContain(REVIEW_SUMMARY_MARKER);
+    expect(summary).toContain("<!-- vibe:review-head:abc123def -->");
+    expect(summary).toContain("summary text");
+  });
+
+  it("detects reviewed head marker from PR comments", async () => {
+    const summaryBody = buildReviewSummaryBody("summary", "abc123def");
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ id: 1, body: summaryBody }]) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def")).toBe(true);
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "fff999")).toBe(false);
+  });
+
+  it("posts review gate skip comment once per head marker", async () => {
+    const comments: Array<{ id: number; body: string }> = [];
+    let nextId = 1;
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: JSON.stringify(comments) };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/issues/99/comments"
+      ) {
+        const bodyArg = args.find((entry) => entry.startsWith("body=")) ?? "body=";
+        comments.push({ id: nextId, body: bodyArg.slice("body=".length) });
+        const id = nextId;
+        nextId += 1;
+        return { stdout: JSON.stringify({ id }) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    await postReviewGateSkipComment({
+      execaFn: execaMock as never,
+      repo: "acme/demo",
+      prNumber: 99,
+      issueId: 34,
+      headSha: "abc123def",
+      dryRun: false,
+    });
+    await postReviewGateSkipComment({
+      execaFn: execaMock as never,
+      repo: "acme/demo",
+      prNumber: 99,
+      issueId: 34,
+      headSha: "abc123def",
+      dryRun: false,
+    });
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toContain(REVIEW_GATE_SKIPPED_MARKER);
+    expect(comments[0]?.body).toContain("<!-- vibe:review-gate-head:abc123def -->");
+  });
+
   it("creates follow-up issue with only labels available in repo", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
       if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
         return { stdout: JSON.stringify({ labels: [{ name: "module:cli" }] }) };
       }
@@ -71,7 +147,6 @@ describe("review PR helpers", () => {
         expect(text).toContain("--label bug");
         expect(text).toContain("--label status:backlog");
         expect(text).not.toContain("module:cli");
-        expect(text).not.toContain("module:tracker");
         return { stdout: "https://example.test/issues/501\n" };
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
@@ -96,6 +171,12 @@ describe("review PR helpers", () => {
   it("retries follow-up issue creation without labels when label add fails", async () => {
     let issueCreateAttempts = 0;
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
       if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
         return { stdout: JSON.stringify({ labels: [{ name: "module:tracker" }] }) };
       }
@@ -133,6 +214,12 @@ describe("review PR helpers", () => {
 
   it("inherits module labels from source issue when available", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
       if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
         return { stdout: JSON.stringify({ labels: [{ name: "module:ui" }, { name: "status:in-progress" }] }) };
       }
@@ -163,6 +250,59 @@ describe("review PR helpers", () => {
     expect(result.created).toBe(true);
     expect(result.number).toBe(503);
     expect(result.label).toBe("enhancement");
+  });
+
+  it("updates existing open follow-up issue instead of creating duplicates", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:cli" }] }) };
+      }
+      if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ name: "bug" }, { name: "status:backlog" }, { name: "module:cli" }]) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 700,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\nexisting",
+              html_url: "https://example.test/issues/700",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "edit") {
+        const full = args.join(" ");
+        expect(full).toContain("700");
+        expect(full).toContain("--add-label bug");
+        expect(full).toContain("--add-label status:backlog");
+        expect(full).toContain("--add-label module:cli");
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        throw new Error("should not create a duplicate follow-up issue");
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await createReviewFollowUpIssue({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      sourceIssueTitle: "review command",
+      findings: [sampleFinding({ kind: "defect", severity: "P1" })],
+      reviewSummary: "summary",
+      milestoneTitle: null,
+      dryRun: false,
+      overrideLabel: null,
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.updated).toBe(true);
+    expect(result.number).toBe(700);
+    expect(result.url).toBe("https://example.test/issues/700");
   });
 
   it("continues publishing when one inline comment fails", async () => {

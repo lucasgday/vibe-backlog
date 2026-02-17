@@ -1,5 +1,6 @@
 import { execa } from "execa";
 import { readTurnContext, validateTurnContext } from "./turn";
+import { runGhWithRetry } from "./gh-retry";
 
 type ExecaFn = typeof execa;
 
@@ -139,7 +140,7 @@ async function fetchIssueSnapshot(
   execaFn: ExecaFn,
   issueId: number,
 ): Promise<{ title: string; url: string | null }> {
-  const response = await execaFn("gh", ["issue", "view", String(issueId), "--json", "title,url"], {
+  const response = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title,url"], {
     stdio: "pipe",
   });
   const row = parseJsonObject(response.stdout, "gh issue view");
@@ -155,8 +156,8 @@ async function fetchIssueSnapshot(
 }
 
 async function findOpenPrByHead(execaFn: ExecaFn, branch: string): Promise<OpenPrSnapshot | null> {
-  const listed = await execaFn(
-    "gh",
+  const listed = await runGhWithRetry(
+    execaFn,
     ["pr", "list", "--head", branch, "--state", "open", "--json", "number,url,title"],
     {
       stdio: "pipe",
@@ -238,8 +239,8 @@ async function createPullRequest(params: {
     };
   }
 
-  const created = await params.execaFn(
-    "gh",
+  const created = await runGhWithRetry(
+    params.execaFn,
     [
       "pr",
       "create",
