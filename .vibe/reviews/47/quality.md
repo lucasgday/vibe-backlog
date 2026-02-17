@@ -37,3 +37,15 @@ Test coverage is strong for core policy/scan logic and CLI integration, includin
 
 ### Findings
 - none
+
+## Run 2026-02-17T20:47:31.572Z
+- run_id: issue-47-pr-51-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Test coverage is strong for policy resolution, CLI wiring, and preflight output, but one portability edge path is untested.
+
+### Findings
+- [P3] Missing test for probe behavior when shell binary is unavailable (tests/security-scan.test.ts:90)

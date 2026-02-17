@@ -29,3 +29,15 @@ No security regression identified. Changes improve baseline secret-detection pos
 
 ### Findings
 - none
+
+## Run 2026-02-17T20:47:31.571Z
+- run_id: issue-47-pr-51-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Security posture is improved via local scanning + CI enforcement, but the workflow introduces a supply-chain integrity gap during binary installation.
+
+### Findings
+- [P2] CI installs gitleaks without checksum/signature verification (.github/workflows/gitleaks.yml:43)

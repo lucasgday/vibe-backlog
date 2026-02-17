@@ -31,3 +31,15 @@ Implementation delivers issue scope end-to-end: portable local scan command plus
 
 ### Findings
 - none
+
+## Run 2026-02-17T20:47:31.571Z
+- run_id: issue-47-pr-51-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The feature is implemented end-to-end (core module, CLI command, preflight integration, contract default, docs, and CI), but there is a portability regression in scanner detection.
+
+### Findings
+- [P2] Scanner availability probe depends on zsh (src/core/security-scan.ts:224)
