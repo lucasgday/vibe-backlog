@@ -54,3 +54,15 @@ Branch cleanup flow is consistent with the intended behavior: automatic cleanup 
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:11:43.780Z
+- run_id: issue-37-pr-49-attempt-1-rerun-merged-fallback
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Merged-branch cleanup now handles HEAD-dependent `git branch -d` failures by retrying with `-D` only after base-merge classification, which aligns behavior with the intended base-ref policy.
+
+### Findings
+- none

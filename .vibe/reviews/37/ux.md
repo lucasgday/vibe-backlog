@@ -35,3 +35,15 @@ CLI output remains deterministic and actionable, with clear summaries and remedi
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:11:43.781Z
+- run_id: issue-37-pr-49-attempt-1-rerun-merged-fallback
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+CLI behavior remains deterministic with actionable output; no UX regressions found for this CLI-only change.
+
+### Findings
+- none

@@ -47,3 +47,15 @@ No security defects identified. Destructive actions remain guarded (`--force-unm
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:11:43.780Z
+- run_id: issue-37-pr-49-attempt-1-rerun-merged-fallback
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No security defects identified in this delta; destructive paths remain explicitly gated and scoped.
+
+### Findings
+- none

@@ -59,3 +59,15 @@ Coverage is adequate for core classification/deletion behavior and postflight in
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:11:43.781Z
+- run_id: issue-37-pr-49-attempt-1-rerun-merged-fallback
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Regression coverage now includes the `-d` -> `-D` fallback path for base-merged branches, and existing integration coverage remains green.
+
+### Findings
+- none
