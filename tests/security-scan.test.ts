@@ -63,9 +63,9 @@ describe.sequential("security scan core", () => {
   });
 
   it("returns deterministic dry-run result without writing runtime record", async () => {
-    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
-      if (args[0] === "-lc") {
-        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
       return { stdout: "", stderr: "", exitCode: 0 };
     });
@@ -82,8 +82,11 @@ describe.sequential("security scan core", () => {
     expect(result.command).toBe("gitleaks git --staged --no-banner --redact");
     expect(result.recordWritten).toBe(false);
     expect(await readLastSecurityScan()).toBeNull();
+    expect(execaMock.mock.calls.some(([cmd, args]) => cmd === "gitleaks" && Array.isArray(args) && args[0] === "version")).toBe(
+      true,
+    );
     expect(
-      execaMock.mock.calls.some(([cmd]) => cmd === "gitleaks"),
+      execaMock.mock.calls.some(([cmd, args]) => cmd === "gitleaks" && Array.isArray(args) && args[0] !== "version"),
     ).toBe(false);
   });
 
@@ -127,12 +130,32 @@ describe.sequential("security scan core", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("handles missing gitleaks executable when probe throws ENOENT", async () => {
+    const execaMock = vi.fn(async () => {
+      const error = new Error("spawn gitleaks ENOENT") as Error & { code?: string };
+      error.code = "ENOENT";
+      throw error;
+    });
+
+    const result = await runSecurityScan(
+      {
+        mode: "staged",
+        dryRun: false,
+      },
+      execaMock as never,
+    );
+
+    expect(result.status).toBe("scanner-missing");
+    expect(result.exitCode).toBe(0);
+    expect(result.detail?.toLowerCase()).toContain("enoent");
+  });
+
   it("treats gitleaks exitCode=1 as findings and obeys policy", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "zsh" && args[0] === "-lc") {
-        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
-      if (cmd === "gitleaks") {
+      if (cmd === "gitleaks" && args[0] !== "version") {
         return { stdout: "", stderr: "1 leak found", exitCode: 1 };
       }
       return { stdout: "", stderr: "", exitCode: 0 };

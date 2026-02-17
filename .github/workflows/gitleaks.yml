@@ -40,8 +40,13 @@ jobs:
         run: |
           set -euo pipefail
           GITLEAKS_VERSION="8.24.2"
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
-          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          RELEASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -fsSL "${RELEASE_URL}/${TARBALL}" -o "/tmp/${TARBALL}"
+          curl -fsSL "${RELEASE_URL}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o /tmp/gitleaks_checksums.txt
+          grep -F " ${TARBALL}" /tmp/gitleaks_checksums.txt > /tmp/gitleaks_checksum.txt
+          (cd /tmp && sha256sum --check gitleaks_checksum.txt)
+          tar -xzf "/tmp/${TARBALL}" -C /tmp gitleaks
           mkdir -p "$HOME/bin"
           install /tmp/gitleaks "$HOME/bin/gitleaks"
           echo "$HOME/bin" >> "$GITHUB_PATH"

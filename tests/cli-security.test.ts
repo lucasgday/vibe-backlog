@@ -32,9 +32,9 @@ describe.sequential("cli security scan", () => {
     writeFileSync(path.join(tempDir, ".vibe", "contract.yml"), "security:\n  gitleaks:\n    policy: warn\n", "utf8");
 
     const logs: string[] = [];
-    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
-      if (args[0] === "-lc") {
-        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
       return { stdout: "", stderr: "", exitCode: 0 };
     });
@@ -50,7 +50,12 @@ describe.sequential("cli security scan", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("security scan: mode=staged policy=warn source=contract dry-run=yes"))).toBe(true);
     expect(logs.some((line) => line.includes("planned command: gitleaks git --staged --no-banner --redact"))).toBe(true);
-    expect(execaMock.mock.calls.some(([cmd]) => cmd === "gitleaks")).toBe(false);
+    expect(execaMock.mock.calls.some(([cmd, args]) => cmd === "gitleaks" && Array.isArray(args) && args[0] === "version")).toBe(
+      true,
+    );
+    expect(
+      execaMock.mock.calls.some(([cmd, args]) => cmd === "gitleaks" && Array.isArray(args) && args[0] !== "version"),
+    ).toBe(false);
   });
 
   it("rejects invalid --mode values", async () => {
@@ -92,10 +97,10 @@ describe.sequential("cli security scan", () => {
   it("keeps warn mode non-blocking when findings are detected", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "zsh" && args[0] === "-lc") {
-        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
-      if (cmd === "gitleaks") {
+      if (cmd === "gitleaks" && args[0] !== "version") {
         return { stdout: "", stderr: "1 leak found", exitCode: 1 };
       }
       return { stdout: "", stderr: "", exitCode: 0 };

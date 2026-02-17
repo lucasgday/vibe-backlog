@@ -146,8 +146,8 @@ describe.sequential("cli status and preflight snapshots", () => {
           ]),
         };
       }
-      if (cmd === "zsh" && args[0] === "-lc") {
-        return { stdout: "/usr/local/bin/gitleaks\n", stderr: "", exitCode: 0 };
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
       return { stdout: "" };
     });
@@ -177,7 +177,7 @@ describe.sequential("cli status and preflight snapshots", () => {
       if (args[0] === "issue" && args[1] === "list") {
         return { stdout: "[]" };
       }
-      if (cmd === "zsh" && args[0] === "-lc") {
+      if (cmd === "gitleaks" && args[0] === "version") {
         throw new Error("security probe unavailable");
       }
       return { stdout: "" };

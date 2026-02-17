@@ -221,21 +221,21 @@ function toCommandString(args: string[]): string {
 
 export async function probeGitleaksAvailability(execaFn: ExecaFn = execa): Promise<ProbeGitleaksResult> {
   try {
-    const probe = await execaFn("zsh", ["-lc", "command -v gitleaks"], { stdio: "pipe", reject: false });
+    const probe = await execaFn("gitleaks", ["version"], { stdio: "pipe", reject: false });
     const exitCode = typeof probe.exitCode === "number" ? probe.exitCode : 1;
-    const location = typeof probe.stdout === "string" ? probe.stdout.trim() : "";
+    const stdout = typeof probe.stdout === "string" ? probe.stdout.trim() : "";
     const stderr = typeof probe.stderr === "string" ? probe.stderr.trim() : "";
-    if (exitCode === 0 && location) {
+    if (exitCode === 0) {
       return {
         available: true,
-        location,
+        location: null,
         detail: null,
       };
     }
     return {
       available: false,
       location: null,
-      detail: stderr || null,
+      detail: stderr || stdout || null,
     };
   } catch (error) {
     return {
