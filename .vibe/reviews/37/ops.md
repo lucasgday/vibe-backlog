@@ -34,3 +34,15 @@ Operationally solid overall (postflight resilience and warning-and-continue beha
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:06:21.545Z
+- run_id: issue-37-pr-49-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operational behavior is stable: tests/build pass, and cleanup integration does not introduce hard-failure coupling into postflight apply flow.
+
+### Findings
+- none

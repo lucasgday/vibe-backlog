@@ -47,3 +47,15 @@ Test coverage is broad for merge/patch/non-merged paths and postflight integrati
 
 ### Findings
 - [P3] Missing test asserting side-effect-free dry-run for cleanup path (tests/cli-postflight.test.ts:572)
+
+## Run 2026-02-17T19:06:21.544Z
+- run_id: issue-37-pr-49-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Coverage is adequate for core classification/deletion behavior and postflight integration, including the dry-run side-effect regression check.
+
+### Findings
+- none

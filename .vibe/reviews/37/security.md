@@ -35,3 +35,15 @@ No direct security vulnerabilities found in authz/input/data-exposure surfaces f
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:06:21.544Z
+- run_id: issue-37-pr-49-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No security defects identified. Destructive actions remain guarded (`--force-unmerged` requires `--yes`) and postflight cleanup failures degrade to warnings instead of unsafe fallback behavior.
+
+### Findings
+- none

@@ -42,3 +42,15 @@ Core branch-cleanup design is clear and mostly aligned with issue #37 guardrails
 
 ### Findings
 - [P2] postflight dry-run triggers fetch/prune side effects (src/core/branch-cleanup.ts:206)
+
+## Run 2026-02-17T19:06:21.543Z
+- run_id: issue-37-pr-49-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Branch cleanup flow is consistent with the intended behavior: automatic cleanup in postflight apply, safe handling for non-merged branches, and dry-run no longer performs fetch/prune side effects.
+
+### Findings
+- none

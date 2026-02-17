@@ -23,3 +23,15 @@ CLI output is generally deterministic and actionable (clear summaries and remedi
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:06:21.544Z
+- run_id: issue-37-pr-49-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+CLI output remains deterministic and actionable, with clear summaries and remediation commands for skipped non-merged branches.
+
+### Findings
+- none
