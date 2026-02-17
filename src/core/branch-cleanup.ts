@@ -147,6 +147,10 @@ function toCommandString(args: string[]): string {
   return ["git", ...args].join(" ");
 }
 
+function isNotFullyMergedDeleteError(detail: string): boolean {
+  return /\bnot fully merged\b/i.test(detail);
+}
+
 async function isMergedIntoBase(execaFn: ExecaFn, branch: string, baseRef: string): Promise<boolean> {
   const merged = await runGitCommand(execaFn, ["merge-base", "--is-ancestor", branch, baseRef]);
   if (merged.exitCode === 0) return true;
@@ -301,7 +305,39 @@ export async function runBranchCleanup(
       continue;
     }
 
-    const detail = deleted.stderr.trim() || deleted.stdout.trim() || "unknown git error";
+    const deleteDetail = deleted.stderr.trim() || deleted.stdout.trim() || "unknown git error";
+    if (category === "merged" && deleteFlag === "-d" && isNotFullyMergedDeleteError(deleteDetail)) {
+      const forceDeleteArgs = ["branch", "-D", snapshot.branch];
+      const forceDeleted = await runGitCommand(execaFn, forceDeleteArgs);
+      if (forceDeleted.exitCode === 0) {
+        candidates.push({
+          branch: snapshot.branch,
+          upstream: snapshot.upstream,
+          category,
+          deleteFlag: "-D",
+          status: "deleted",
+          reason: null,
+          command: toCommandString(forceDeleteArgs),
+        });
+        continue;
+      }
+
+      const forceDetail = forceDeleted.stderr.trim() || forceDeleted.stdout.trim() || "unknown git error";
+      const reason = `delete failed: ${forceDetail}`;
+      errors.push(`branch cleanup: unable to delete '${snapshot.branch}' (${forceDetail}).`);
+      candidates.push({
+        branch: snapshot.branch,
+        upstream: snapshot.upstream,
+        category,
+        deleteFlag: "-D",
+        status: "error",
+        reason,
+        command: toCommandString(forceDeleteArgs),
+      });
+      continue;
+    }
+
+    const detail = deleteDetail;
     const reason = `delete failed: ${detail}`;
     errors.push(`branch cleanup: unable to delete '${snapshot.branch}' (${detail}).`);
     candidates.push({

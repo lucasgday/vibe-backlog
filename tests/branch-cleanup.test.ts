@@ -157,4 +157,50 @@ describe("branch cleanup core", () => {
     expect(result.deleted).toBe(1);
     expect(result.warnings.some((warning) => warning.includes("git fetch --prune origin"))).toBe(true);
   });
+
+  it("falls back to force delete when merged branch fails -d due to HEAD-dependent check", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
+
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("feature/active\n");
+      if (args[0] === "symbolic-ref") return gitResponse("origin/main\n");
+      if (args[0] === "rev-parse" && args[1] === "--verify") return gitResponse("abc123\n");
+      if (args[0] === "fetch") return gitResponse("");
+      if (args[0] === "for-each-ref") return gitResponse("feature/merged\torigin/feature/merged\t[gone]\nfeature/active\torigin/feature/active\t");
+      if (args[0] === "merge-base" && args[2] === "feature/merged") return gitResponse("", 0);
+      if (args[0] === "branch" && args[1] === "-d" && args[2] === "feature/merged") {
+        return gitResponse("", 1, "error: The branch 'feature/merged' is not fully merged.");
+      }
+      if (args[0] === "branch" && args[1] === "-D" && args[2] === "feature/merged") return gitResponse("");
+
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+
+    const result = await runBranchCleanup(
+      {
+        dryRun: false,
+      },
+      execaMock as never,
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.deleted).toBe(1);
+    expect(result.candidates[0]).toMatchObject({
+      branch: "feature/merged",
+      category: "merged",
+      status: "deleted",
+      deleteFlag: "-D",
+      command: "git branch -D feature/merged",
+    });
+    expect(
+      execaMock.mock.calls.some(
+        ([git, args]) => git === "git" && Array.isArray(args) && args[0] === "branch" && args[1] === "-d",
+      ),
+    ).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([git, args]) => git === "git" && Array.isArray(args) && args[0] === "branch" && args[1] === "-D",
+      ),
+    ).toBe(true);
+  });
 });
