@@ -28,6 +28,7 @@ import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 import { runPrOpenCommand } from "./core/pr-open";
 import { hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
 import { runGhWithRetry } from "./core/gh-retry";
+import { runBranchCleanup, type BranchCleanupResult } from "./core/branch-cleanup";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -44,6 +45,48 @@ function printPathList(title: string, paths: string[]): void {
   console.log(`\n${title}:`);
   for (const entry of paths) {
     console.log(`- ${entry}`);
+  }
+}
+
+function printBranchCleanupReport(result: BranchCleanupResult, context: "standalone" | "postflight"): void {
+  const heading = context === "postflight" ? "postflight --apply: branch cleanup" : "branch cleanup";
+  console.log(`\n${heading}: base=${result.baseRef} current=${result.currentBranch} dry-run=${result.dryRun ? "yes" : "no"}`);
+
+  if (!result.candidates.length && !result.protectedSkipped.length) {
+    console.log("branch cleanup: no upstream-gone local branches eligible.");
+  } else {
+    if (result.protectedSkipped.length) {
+      console.log(`protected branches skipped: ${result.protectedSkipped.join(", ")}`);
+    }
+
+    for (const candidate of result.candidates) {
+      const upstream = candidate.upstream ?? "-";
+      const action = candidate.command ?? "-";
+      const reason = candidate.reason ? ` (${candidate.reason})` : "";
+      console.log(
+        `- ${candidate.branch} | ${candidate.category} | ${candidate.status} | upstream=${upstream} | action=${action}${reason}`,
+      );
+    }
+  }
+
+  console.log(
+    `branch cleanup summary: detected=${result.detected} deleted=${result.deleted} planned=${result.planned} skipped=${result.skipped} errors=${result.errors.length}`,
+  );
+
+  if (result.nonMergedBlocked.length) {
+    console.log("\nbranch cleanup: non-merged branches require explicit confirmation:");
+    for (const branch of result.nonMergedBlocked) {
+      console.log(`- ${branch}`);
+    }
+    console.log("Run: node dist/cli.cjs branch cleanup --dry-run");
+    console.log("Then (if desired): node dist/cli.cjs branch cleanup --force-unmerged --yes");
+  }
+
+  if (result.warnings.length) {
+    console.log("\nbranch cleanup warnings:");
+    for (const warning of result.warnings) {
+      console.log(`- ${warning}`);
+    }
   }
 }
 
@@ -970,6 +1013,57 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       }
     });
 
+  const branch = program.command("branch").description("Local branch hygiene workflows");
+
+  branch
+    .command("cleanup")
+    .description("Detect and clean local upstream-gone branches with safety guardrails")
+    .option("--dry-run", "Plan cleanup without deleting branches", false)
+    .option("--base <name>", "Base branch/ref used for merge + patch-equivalence checks")
+    .option("--force-unmerged", "Allow deleting non-merged branches (requires --yes)", false)
+    .option("--yes", "Confirm destructive cleanup operations for non-merged branches", false)
+    .option("--no-fetch-prune", "Skip `git fetch --prune origin` before detection")
+    .action(async (opts) => {
+      const dryRun = Boolean(opts.dryRun);
+      const forceUnmerged = Boolean(opts.forceUnmerged);
+      const confirmForce = Boolean(opts.yes);
+      const fetchPrune = Boolean(opts.fetchPrune);
+      const baseBranch = typeof opts.base === "string" ? opts.base : null;
+
+      if (forceUnmerged && !confirmForce) {
+        console.error("branch cleanup: --force-unmerged requires --yes.");
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        const result = await runBranchCleanup(
+          {
+            dryRun,
+            baseBranch,
+            forceUnmerged,
+            confirmForce,
+            fetchPrune,
+          },
+          execaFn,
+        );
+
+        printBranchCleanupReport(result, "standalone");
+
+        if (result.errors.length) {
+          console.error("branch cleanup: completed with errors.");
+          for (const error of result.errors) {
+            console.error(`- ${error}`);
+          }
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        console.error("branch cleanup: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
   const tracker = program.command("tracker").description("Manage tracker bootstrap for current repository");
 
   tracker
@@ -1467,6 +1561,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("-f, --file <path>", "Path to postflight JSON", ".vibe/artifacts/postflight.json")
     .option("--apply", "Apply tracker updates using gh", false)
     .option("--dry-run", "Print gh commands without executing them", false)
+    .option("--skip-branch-cleanup", "Skip automatic local branch cleanup routine", false)
     .action(async (opts) => {
       const fs = await import("node:fs/promises");
 
@@ -1529,23 +1624,54 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
 
         if (!cmds.length && !linkedPrNumbers.length) {
           console.log("postflight --apply: no hay tracker_updates aplicables.");
-          return;
+        } else {
+          console.log("\nApplying updates:");
+          for (const c of cmds) {
+            printGhCommand(c.args);
+            if (!opts.dryRun) {
+              await runGhWithRetry(execaFn, c.args, { stdio: "inherit" });
+            }
+          }
+
+          await syncPrBodiesWithIssueReference({
+            execaFn,
+            issueId,
+            prNumbers: linkedPrNumbers,
+            dryRun: Boolean(opts.dryRun),
+          });
         }
 
-        console.log("\nApplying updates:");
-        for (const c of cmds) {
-          printGhCommand(c.args);
-          if (!opts.dryRun) {
-            await runGhWithRetry(execaFn, c.args, { stdio: "inherit" });
+        if (!opts.skipBranchCleanup) {
+          try {
+            const cleanupResult = await runBranchCleanup(
+              {
+                dryRun: Boolean(opts.dryRun),
+                baseBranch: parsed.data.work.base_branch,
+                forceUnmerged: false,
+                confirmForce: false,
+              },
+              execaFn,
+            );
+            printBranchCleanupReport(cleanupResult, "postflight");
+            if (cleanupResult.errors.length) {
+              console.error("postflight --apply: branch cleanup warning (continuing).");
+              for (const error of cleanupResult.errors) {
+                console.error(`- ${error}`);
+              }
+              console.error("Run: node dist/cli.cjs branch cleanup --dry-run");
+              console.error("Then (if needed): node dist/cli.cjs branch cleanup --force-unmerged --yes");
+            }
+          } catch (cleanupError) {
+            console.error("postflight --apply: branch cleanup warning (continuing).");
+            if (cleanupError instanceof Error && cleanupError.message) {
+              console.error(cleanupError.message);
+            } else {
+              console.error(cleanupError);
+            }
+            console.error("Run: node dist/cli.cjs branch cleanup --dry-run");
+            console.error("Then (if needed): node dist/cli.cjs branch cleanup --force-unmerged --yes");
           }
         }
-
-        await syncPrBodiesWithIssueReference({
-          execaFn,
-          issueId,
-          prNumbers: linkedPrNumbers,
-          dryRun: Boolean(opts.dryRun),
-        });
 
         console.log("\npostflight --apply: DONE");
       } catch (e) {

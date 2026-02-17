@@ -73,7 +73,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(execaMock).toHaveBeenCalledTimes(3);
     expect(execaMock).toHaveBeenNthCalledWith(
@@ -138,7 +138,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(execaMock).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
@@ -193,7 +193,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(execaMock).toHaveBeenCalledTimes(4);
     expect(execaMock).toHaveBeenNthCalledWith(
@@ -267,7 +267,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(execaMock).toHaveBeenCalledTimes(3);
     expect(execaMock).toHaveBeenNthCalledWith(
@@ -347,7 +347,7 @@ describe.sequential("cli postflight --apply", () => {
     });
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(process.exitCode).toBe(1);
     expect(errors.some((line) => line.includes("review gate missing"))).toBe(true);
@@ -418,7 +418,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(process.exitCode).toBeUndefined();
     expect(
@@ -496,7 +496,7 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
     expect(process.exitCode).toBeUndefined();
     expect(
@@ -504,6 +504,245 @@ describe.sequential("cli postflight --apply", () => {
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "rev-parse",
       ),
     ).toBe(false);
+  });
+
+  it("runs automatic branch cleanup even when tracker updates are empty", async () => {
+    const postflightPath = path.join(tempDir, "cleanup-auto-no-updates.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-17T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "" }],
+          next_actions: ["Cleanup branches."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Recreate branch from remote if needed.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "symbolic-ref") return { stdout: "origin/main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "--verify") return { stdout: "abc123\n", stderr: "", exitCode: 0 };
+      if (args[0] === "fetch") return { stdout: "", stderr: "", exitCode: 0 };
+      if (args[0] === "for-each-ref") return { stdout: "feature/merged\torigin/feature/merged\t[gone]\nmain\torigin/main\t" };
+      if (args[0] === "merge-base") return { stdout: "", stderr: "", exitCode: 0 };
+      if (args[0] === "branch" && args[1] === "-d" && args[2] === "feature/merged") return { stdout: "" };
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "git" && Array.isArray(args) && args[0] === "branch" && args[1] === "-d" && args[2] === "feature/merged",
+      ),
+    ).toBe(true);
+  });
+
+  it("supports postflight --apply --dry-run cleanup planning without deleting branches", async () => {
+    const postflightPath = path.join(tempDir, "cleanup-auto-dry-run.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-17T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "" }],
+          next_actions: ["Cleanup branches."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Recreate branch from remote if needed.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "symbolic-ref") return { stdout: "origin/main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "--verify") return { stdout: "abc123\n", stderr: "", exitCode: 0 };
+      if (args[0] === "fetch") return { stdout: "", stderr: "", exitCode: 0 };
+      if (args[0] === "for-each-ref") return { stdout: "feature/merged\torigin/feature/merged\t[gone]" };
+      if (args[0] === "merge-base") return { stdout: "", stderr: "", exitCode: 0 };
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--dry-run"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("postflight --apply: branch cleanup"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "branch" && (args[1] === "-d" || args[1] === "-D"),
+      ),
+    ).toBe(false);
+  });
+
+  it("skips automatic cleanup when --skip-branch-cleanup is provided", async () => {
+    const postflightPath = path.join(tempDir, "cleanup-skip.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-17T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "" }],
+          next_actions: ["Cleanup branches."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Recreate branch from remote if needed.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "git")).toBe(false);
+  });
+
+  it("warns and continues when automatic branch cleanup fails", async () => {
+    const postflightPath = path.join(tempDir, "cleanup-warning.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-17T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "" }],
+          next_actions: ["Cleanup branches."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Recreate branch from remote if needed.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const errors: string[] = [];
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "", stderr: "fatal: not a git repository", exitCode: 1 };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(errors.some((line) => line.includes("branch cleanup warning (continuing)"))).toBe(true);
+    expect(logs.some((line) => line.includes("postflight --apply: DONE"))).toBe(true);
   });
 
   it("prints a deterministic dry-run command plan without executing gh", async () => {
@@ -557,7 +796,16 @@ describe.sequential("cli postflight --apply", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--dry-run"]);
+    await program.parseAsync([
+      "node",
+      "vibe",
+      "postflight",
+      "--file",
+      postflightPath,
+      "--apply",
+      "--dry-run",
+      "--skip-branch-cleanup",
+    ]);
 
     expect(execaMock).not.toHaveBeenCalled();
     expect(logs).toMatchInlineSnapshot(`
