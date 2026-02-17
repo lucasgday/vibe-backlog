@@ -186,7 +186,7 @@ export async function runBranchCleanup(
   const dryRun = Boolean(options.dryRun);
   const forceUnmerged = Boolean(options.forceUnmerged);
   const confirmForce = Boolean(options.confirmForce);
-  const shouldFetchPrune = options.fetchPrune !== false;
+  const shouldFetchPrune = options.fetchPrune !== false && !dryRun;
 
   if (forceUnmerged && !confirmForce) {
     throw new Error("branch cleanup: --force-unmerged requires --yes.");

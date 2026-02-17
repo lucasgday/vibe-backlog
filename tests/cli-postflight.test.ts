@@ -628,6 +628,11 @@ describe.sequential("cli postflight --apply", () => {
     expect(logs.some((line) => line.includes("postflight --apply: branch cleanup"))).toBe(true);
     expect(
       execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "fetch" && args[1] === "--prune",
+      ),
+    ).toBe(false);
+    expect(
+      execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "branch" && (args[1] === "-d" || args[1] === "-D"),
       ),
     ).toBe(false);

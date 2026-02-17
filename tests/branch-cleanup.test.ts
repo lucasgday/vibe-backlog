@@ -100,7 +100,6 @@ describe("branch cleanup core", () => {
       if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("main\n");
       if (args[0] === "symbolic-ref") return gitResponse("origin/main\n");
       if (args[0] === "rev-parse" && args[1] === "--verify") return gitResponse("abc123\n");
-      if (args[0] === "fetch") return gitResponse("");
       if (args[0] === "for-each-ref") return gitResponse("feature/merged\torigin/feature/merged\t[gone]");
       if (args[0] === "merge-base") return gitResponse("", 0);
 
@@ -121,6 +120,11 @@ describe("branch cleanup core", () => {
       status: "planned",
       deleteFlag: "-d",
     });
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "fetch" && args[1] === "--prune",
+      ),
+    ).toBe(false);
     expect(
       execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "branch" && (args[1] === "-d" || args[1] === "-D"),
