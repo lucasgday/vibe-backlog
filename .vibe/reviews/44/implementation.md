@@ -53,3 +53,15 @@ Postflight apply review-gate now resolves PR head SHA from GitHub metadata inste
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:33:54.734Z
+- run_id: issue-44-pr-45-attempt-1-rationale-followup
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The rationale autofill logic now preserves trailing autoclose footers and no longer treats the final section as extending to end-of-body when a Fixes/Closes/Resolves footer is present.
+
+### Findings
+- none

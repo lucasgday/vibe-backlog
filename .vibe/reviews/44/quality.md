@@ -59,3 +59,15 @@ Regression coverage is adequate for missing-marker, marker-present, and non-loca
 
 ### Findings
 - none
+
+## Run 2026-02-17T02:33:54.735Z
+- run_id: issue-44-pr-45-attempt-1-rationale-followup
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Coverage is adequate for both regressions: footer preservation is tested and TODO placeholder re-detection after autofill is tested, including no-op second-pass behavior.
+
+### Findings
+- none
