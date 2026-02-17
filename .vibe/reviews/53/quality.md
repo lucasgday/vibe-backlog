@@ -47,3 +47,15 @@ Test coverage is strong for the new command paths, but it does not currently gua
 
 ### Findings
 - [P3] Missing regression test for mixed legacy+policy marker coexistence (tests/review-pr.test.ts:108)
+
+## Run 2026-02-17T22:35:31.967Z
+- run_id: issue-53-pr-54-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Quality coverage is sufficient for the fixes, including dedicated regression tests for mixed marker coexistence and explicit-PR thread resolution without branch dependency.
+
+### Findings
+- none

@@ -43,3 +43,15 @@ Core scope is implemented, but two correctness regressions remain in policy-awar
 ### Findings
 - [P2] Policy-aware gate can be bypassed by legacy summary comments (src/core/review-pr.ts:466)
 - [P2] `review threads resolve --pr <n>` still hard-depends on current branch (src/core/review-threads.ts:471)
+
+## Run 2026-02-17T22:35:31.966Z
+- run_id: issue-53-pr-54-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The two previously reported P2 implementation defects are addressed: policy-aware gate now handles mixed legacy+policy markers safely, and explicit `--pr` thread resolution no longer depends on current branch state.
+
+### Findings
+- none

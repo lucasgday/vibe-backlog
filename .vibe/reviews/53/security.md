@@ -36,3 +36,15 @@ No new direct secret-handling or data-exposure issues were found, but the policy
 
 ### Findings
 - none
+
+## Run 2026-02-17T22:35:31.967Z
+- run_id: issue-53-pr-54-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new security regressions identified in this iteration; review-gate integrity is improved by removing the mixed-marker bypass path.
+
+### Findings
+- none
