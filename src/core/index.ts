@@ -12,3 +12,4 @@ export * from "./review-pr";
 export * from "./review-postflight";
 export * from "./review";
 export * from "./pr-open";
+export * from "./branch-cleanup";
