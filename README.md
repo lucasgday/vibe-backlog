@@ -159,7 +159,10 @@ node dist/cli.cjs branch cleanup --dry-run
 node dist/cli.cjs branch cleanup
 node dist/cli.cjs branch cleanup --force-unmerged --yes
 node dist/cli.cjs review --dry-run
+node dist/cli.cjs review threads resolve --pr <n> --all-unresolved --dry-run
+node dist/cli.cjs review threads resolve --pr <n> --thread-id <id>
 node dist/cli.cjs pr open --dry-run --issue <n> --branch <name>
+node dist/cli.cjs pr open --force-review --issue <n> --branch <name>
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
@@ -307,13 +310,40 @@ Options:
 - `--base <name>`: base branch override.
 - `--dry-run`: print PR payload plan only.
 - `--skip-review-gate`: bypass review gate and publish an auditable PR comment marker.
+- `--force-review`: force review rerun even when existing gate markers satisfy the current HEAD.
 
 Review gate behavior:
 
 - Default `pr open` enforces review execution for the target PR branch `HEAD` (resolved from `--branch`/turn/current branch).
-- Dedupe is marker-based on PR comments: `<!-- vibe:review-summary -->` + `<!-- vibe:review-head:<sha> -->`.
-- If the target branch HEAD already has a summary marker, gate is satisfied and review is not re-run.
+- Dedupe is marker-based on PR comments: `<!-- vibe:review-summary -->` + `<!-- vibe:review-head:<sha> -->` (+ optional `<!-- vibe:review-policy:<key> -->`).
+- Progressive compatibility:
+  - legacy summary comments without policy marker still satisfy gate for matching HEAD.
+  - if policy marker exists, `pr open` requires `HEAD + policy` match.
 - If marker is missing, `pr open` auto-runs `vibe review` (full profile, non-strict).
+- If `--force-review` is set, `pr open` reruns `vibe review` even when gate markers already match.
 - For non-dry-run gate execution, target branch must be checked out before auto-review can run.
 - If `--skip-review-gate` is set, no auto-review runs; PR receives `<!-- vibe:review-gate-skipped -->`.
+- `--skip-review-gate` and `--force-review` are mutually exclusive.
 - If `pr open` creates a PR and auto-review fails, the PR remains open and command exits with error.
+
+## `vibe review threads resolve` command reference
+
+```bash
+vibe review threads resolve [options]
+```
+
+Options:
+
+- `--pr <n>`: PR number override. If omitted, resolve against the open PR for the current branch.
+- `--thread-id <id>`: target thread id (repeatable). Single-target mode.
+- `--all-unresolved`: batch mode for all unresolved threads on the target PR (including outdated threads).
+- `--body <text>`: optional manual reply body (overrides auto-generated detailed body).
+- `--dry-run`: show plan without replying/resolving.
+
+Rules:
+
+- Exactly one targeting mode is required: `--thread-id` (one or more) or `--all-unresolved`.
+- In apply mode, each selected thread gets:
+  1. reply comment (`addPullRequestReviewThreadReply`)
+  2. resolve mutation (`resolveReviewThread`)
+- Auto-body (when `--body` is not provided) includes: PR, HEAD, thread id, outdated status, location, finding title/severity/pass and fingerprint when available.

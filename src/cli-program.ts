@@ -26,7 +26,8 @@ import {
 } from "./core/review";
 import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 import { runPrOpenCommand } from "./core/pr-open";
-import { hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
+import { buildReviewPolicyKey, hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
+import { resolveReviewThreads } from "./core/review-threads";
 import { runGhWithRetry } from "./core/gh-retry";
 import { runBranchCleanup, type BranchCleanupResult } from "./core/branch-cleanup";
 import {
@@ -46,6 +47,13 @@ const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
 const GUARD_INVALID_TURN_EXIT_CODE = 3;
 const GUARD_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
 const GH_API_PAGE_SIZE = 100;
+const PR_OPEN_REVIEW_GATE_POLICY_KEY = buildReviewPolicyKey({
+  autofix: true,
+  autopush: true,
+  publish: true,
+  strict: false,
+  maxAttempts: 5,
+});
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
@@ -137,6 +145,12 @@ function printSecurityScanReport(result: SecurityScanResult): void {
       console.log(`- ${step}`);
     }
   }
+}
+
+function collectRepeatedOption(value: string, previous: string[]): string[] {
+  const normalized = String(value).trim();
+  if (!normalized) return previous;
+  return [...previous, normalized];
 }
 
 async function printPreflightSecuritySummary(execaFn: ExecaFn): Promise<void> {
@@ -1302,8 +1316,15 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("--base <name>", "Base branch override (defaults to active turn/main)")
     .option("--dry-run", "Print planned PR payload without creating PR", false)
     .option("--skip-review-gate", "Bypass review gate and leave an audit marker on the PR", false)
+    .option("--force-review", "Force review rerun even when gate markers already satisfy HEAD/policy", false)
     .action(async (opts) => {
       try {
+        const skipReviewGate = Boolean(opts.skipReviewGate);
+        const forceReview = Boolean(opts.forceReview);
+        if (skipReviewGate && forceReview) {
+          throw new Error("pr open: --skip-review-gate and --force-review cannot be combined.");
+        }
+
         const result = await runPrOpenCommand(
           {
             issueOverride: opts.issue ?? null,
@@ -1332,7 +1353,6 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           }
         }
 
-        const skipReviewGate = Boolean(opts.skipReviewGate);
         if (skipReviewGate && result.dryRun) {
           console.log("pr open: review gate skipped (dry-run, no audit comment).");
           return;
@@ -1358,14 +1378,20 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         }
 
         let gateSatisfied = false;
-        if (result.prNumber) {
+        if (result.prNumber && !forceReview) {
           const repo = await resolveRepoNameWithOwner(execaFn);
-          gateSatisfied = await hasReviewForHead(execaFn, repo, result.prNumber, headSha);
+          gateSatisfied = await hasReviewForHead(execaFn, repo, result.prNumber, headSha, {
+            policyKey: PR_OPEN_REVIEW_GATE_POLICY_KEY,
+          });
         }
 
         if (gateSatisfied) {
           console.log(`pr open: review gate satisfied for HEAD ${shortHead}.`);
           return;
+        }
+
+        if (forceReview) {
+          console.log(`pr open: --force-review set for HEAD ${shortHead}; running vibe review...`);
         }
 
         if (!result.dryRun) {
@@ -1377,7 +1403,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           }
         }
 
-        console.log(`pr open: review gate missing for HEAD ${shortHead}; running vibe review...`);
+        if (!forceReview) {
+          console.log(`pr open: review gate missing for HEAD ${shortHead}; running vibe review...`);
+        }
         const reviewResult = await runReviewCommand(
           {
             issueOverride: result.issueId,
@@ -1531,9 +1559,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       }
     });
 
-  program
-    .command("review")
-    .description("Run role-based review passes and publish final report to PR")
+  const review = program.command("review").description("Run role-based review passes and publish final report to PR");
+
+  review
     .option("--issue <n>", "GitHub issue number override")
     .option("--agent-provider <provider>", "Review agent provider (auto|codex|claude|gemini|command)", "auto")
     .option("--agent-cmd <cmd>", "External review agent command (fallback: VIBE_REVIEW_AGENT_CMD)")
@@ -1646,6 +1674,102 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         }
 
         console.error("review: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  const reviewThreads = review.command("threads").description("Review thread workflows for an existing PR");
+
+  reviewThreads
+    .command("resolve")
+    .description("Reply and resolve PR review threads in single or batch mode")
+    .option("--pr <n>", "PR number override (defaults to open PR on current branch)")
+    .option("--thread-id <id>", "Target thread id (repeatable)", collectRepeatedOption, [])
+    .option("--all-unresolved", "Process all unresolved threads on the target PR", false)
+    .option("--body <text>", "Override auto-generated thread reply body")
+    .option("--dry-run", "Plan operations without posting replies/resolving threads", false)
+    .action(async (opts) => {
+      const prRaw = typeof opts.pr === "string" ? opts.pr.trim() : "";
+      let prNumber: number | null = null;
+      if (prRaw) {
+        if (!/^[0-9]+$/.test(prRaw)) {
+          console.error("review threads resolve: --pr must be a positive integer.");
+          process.exitCode = 1;
+          return;
+        }
+        prNumber = Number(prRaw);
+        if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+          console.error("review threads resolve: --pr must be a positive integer.");
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const threadIds = Array.isArray(opts.threadId)
+        ? opts.threadId
+            .map((entry: unknown) => String(entry).trim())
+            .filter((entry: string) => entry.length > 0)
+        : [];
+      const allUnresolved = Boolean(opts.allUnresolved);
+      const bodyOverrideRaw = typeof opts.body === "string" ? opts.body : null;
+      const bodyOverride = bodyOverrideRaw && bodyOverrideRaw.trim() ? bodyOverrideRaw : null;
+      if (bodyOverrideRaw !== null && !bodyOverride) {
+        console.error("review threads resolve: --body cannot be empty.");
+        process.exitCode = 1;
+        return;
+      }
+
+      if (allUnresolved === (threadIds.length > 0)) {
+        console.error("review threads resolve: provide exactly one target mode: --thread-id <id> or --all-unresolved.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const inheritedReviewOptions = review.opts() as Record<string, unknown>;
+      const effectiveDryRun = Boolean(opts.dryRun) || inheritedReviewOptions.dryRun === true;
+
+      try {
+        const result = await resolveReviewThreads(
+          {
+            prNumber,
+            threadIds,
+            allUnresolved,
+            bodyOverride,
+            dryRun: effectiveDryRun,
+          },
+          execaFn,
+        );
+
+        const head = result.headSha ? result.headSha.slice(0, 12) : "-";
+        console.log(
+          `review threads resolve: pr=#${result.prNumber} branch=${result.branch ?? "-"} head=${head} mode=${result.targetMode} dry-run=${result.dryRun ? "yes" : "no"}`,
+        );
+        console.log(
+          `review threads resolve: total=${result.totalThreads} selected=${result.selectedThreads} planned=${result.planned} replied=${result.replied} resolved=${result.resolved} skipped=${result.skipped} failed=${result.failed}`,
+        );
+
+        for (const item of result.items) {
+          const status = item.failed
+            ? "FAILED"
+            : item.skipped
+              ? "SKIPPED"
+              : item.planned
+                ? "PLANNED"
+                : item.resolved
+                  ? "DONE"
+                  : "UPDATED";
+          const location =
+            item.path && item.line ? `${item.path}:${item.line}` : item.path ? item.path : item.title ? item.title : "-";
+          const reason = item.reason ? ` | ${item.reason}` : "";
+          console.log(`- ${item.threadId} | ${status} | ${location}${reason}`);
+        }
+
+        if (result.failed > 0) {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        console.error("review threads resolve: ERROR");
         console.error(error);
         process.exitCode = 1;
       }

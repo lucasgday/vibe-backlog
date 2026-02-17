@@ -5,7 +5,16 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createProgram } from "../src/cli-program";
+import { buildReviewPolicyKey } from "../src/core/review-pr";
 import { writeTurnContext } from "../src/core/turn";
+
+const PR_OPEN_POLICY_KEY = buildReviewPolicyKey({
+  autofix: true,
+  autopush: true,
+  publish: true,
+  strict: false,
+  maxAttempts: 5,
+});
 
 function buildAgentOutput(runId: string, findingsCount = 0): string {
   const findings =
@@ -522,6 +531,292 @@ describe.sequential("cli pr open", () => {
     expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
   });
 
+  it("skips auto-review when head marker and matching policy marker are present", async () => {
+    await writeTurnContext({
+      issue_id: 6,
+      branch: "issue-6-vibe-pr-open",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "vibe pr open",
+    });
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 61,
+              title: "feat: add vibe pr open command",
+              url: "https://example.test/pull/61",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat: add vibe pr open command with issue linkage",
+            url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            body: "## Summary\n- Existing body\n\n## Architecture decisions\n- done",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
+        return { stdout: "abc123def\n" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/61/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 10,
+              body: `<!-- vibe:review-summary -->\\n<!-- vibe:review-head:abc123def -->\\n<!-- vibe:review-policy:${PR_OPEN_POLICY_KEY} -->\\nsummary`,
+            },
+          ]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review gate satisfied for HEAD abc123def"))).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
+  });
+
+  it("reruns review when policy marker exists but does not match gate policy", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 6,
+      branch: "issue-6-vibe-pr-open",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "vibe pr open",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const mismatchedPolicyKey = buildReviewPolicyKey({
+      autofix: false,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "issue-6-vibe-pr-open\n" };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
+        return { stdout: "abc123def\n" };
+      }
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") {
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat: add vibe pr open command with issue linkage",
+            url: "https://example.test/issues/6",
+            milestone: null,
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 61,
+              title: "feat: add vibe pr open command",
+              url: "https://example.test/pull/61",
+              headRefOid: "abc123",
+              body: "Fixes #6",
+              baseRefName: "main",
+            },
+          ]),
+        };
+      }
+      if (cmd === "zsh") {
+        return { stdout: buildAgentOutput("run-pr-open-policy-mismatch") };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return { stdout: JSON.stringify({ headRefOid: "abc123def" }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/61/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 10,
+              body: `<!-- vibe:review-summary -->\\n<!-- vibe:review-head:abc123def -->\\n<!-- vibe:review-policy:${mismatchedPolicyKey} -->\\nsummary`,
+            },
+          ]),
+        };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "PATCH" &&
+        args[3] === "repos/acme/demo/issues/comments/10"
+      ) {
+        return { stdout: JSON.stringify({ id: 10 }) };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/issues/61/comments"
+      ) {
+        return { stdout: JSON.stringify({ id: 9001 }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/61/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review gate missing for HEAD abc123def"))).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(true);
+  });
+
+  it("reruns review when --force-review is set even if gate markers match", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 6,
+      branch: "issue-6-vibe-pr-open",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "vibe pr open",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "issue-6-vibe-pr-open\n" };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
+        return { stdout: "abc123def\n" };
+      }
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") {
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat: add vibe pr open command with issue linkage",
+            url: "https://example.test/issues/6",
+            milestone: null,
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 61,
+              title: "feat: add vibe pr open command",
+              url: "https://example.test/pull/61",
+              headRefOid: "abc123",
+              body: "Fixes #6",
+              baseRefName: "main",
+            },
+          ]),
+        };
+      }
+      if (cmd === "zsh") {
+        return { stdout: buildAgentOutput("run-pr-open-forced") };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
+        return { stdout: "" };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return { stdout: JSON.stringify({ headRefOid: "abc123def" }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/61/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 10,
+              body: `<!-- vibe:review-summary -->\\n<!-- vibe:review-head:abc123def -->\\n<!-- vibe:review-policy:${PR_OPEN_POLICY_KEY} -->\\nsummary`,
+            },
+          ]),
+        };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "PATCH" &&
+        args[3] === "repos/acme/demo/issues/comments/10"
+      ) {
+        return { stdout: JSON.stringify({ id: 10 }) };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/issues/61/comments"
+      ) {
+        return { stdout: JSON.stringify({ id: 9001 }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/61/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open", "--force-review"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("--force-review set"))).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(true);
+  });
+
   it("runs auto-review when gate marker is missing for HEAD", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
@@ -682,6 +977,22 @@ describe.sequential("cli pr open", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("review gate skipped for HEAD abc123def"))).toBe(true);
     expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
+  });
+
+  it("fails when --skip-review-gate and --force-review are combined", async () => {
+    const errors: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open", "--skip-review-gate", "--force-review"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("--skip-review-gate and --force-review cannot be combined"))).toBe(true);
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
   it("uses target branch HEAD for gate checks when --branch differs from checkout", async () => {

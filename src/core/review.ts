@@ -12,6 +12,7 @@ import {
 import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from "./review-provider";
 import {
   buildReviewSummaryBody,
+  buildReviewPolicyKey,
   computeFindingFingerprint,
   createReviewFollowUpIssue,
   fetchIssueSnapshot,
@@ -416,6 +417,13 @@ export async function runReviewCommand(
   execaFn: ExecaFn = execa,
 ): Promise<ReviewCommandResult> {
   const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
+  const reviewPolicyKey = buildReviewPolicyKey({
+    autofix: options.autofix,
+    autopush: options.autopush,
+    publish: options.publish,
+    strict: options.strict,
+    maxAttempts,
+  });
 
   const context = await resolveReviewRunContext(
     execaFn,
@@ -632,7 +640,7 @@ export async function runReviewCommand(
       execaFn,
       repo,
       pr,
-      summaryBody: buildReviewSummaryBody(summary, summaryHeadSha),
+      summaryBody: buildReviewSummaryBody(summary, summaryHeadSha, { policyKey: reviewPolicyKey }),
       findings: unresolvedFindings,
       dryRun: options.dryRun,
     });

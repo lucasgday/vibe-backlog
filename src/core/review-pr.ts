@@ -10,8 +10,10 @@ type ExecaFn = typeof execa;
 const GH_API_PAGE_SIZE = 100;
 export const REVIEW_SUMMARY_MARKER = "<!-- vibe:review-summary -->";
 export const REVIEW_HEAD_MARKER_PREFIX = "<!-- vibe:review-head:";
+export const REVIEW_POLICY_MARKER_PREFIX = "<!-- vibe:review-policy:";
 export const REVIEW_GATE_SKIPPED_MARKER = "<!-- vibe:review-gate-skipped -->";
 const REVIEW_HEAD_MARKER_REGEX = /<!-- vibe:review-head:([a-f0-9]+) -->/gi;
+const REVIEW_POLICY_MARKER_REGEX = /<!-- vibe:review-policy:([a-z0-9;=_-]+) -->/gi;
 const REVIEW_GATE_HEAD_MARKER_PREFIX = "<!-- vibe:review-gate-head:";
 const REVIEW_FOLLOWUP_SOURCE_MARKER_PREFIX = "<!-- vibe:review-followup:source-issue:";
 const REVIEW_FOLLOWUP_SOURCE_MARKER_REGEX = /<!-- vibe:review-followup:source-issue:(\d+) -->/i;
@@ -51,6 +53,14 @@ export type FollowUpIssue = {
 
 export type FollowUpLabelOverride = "bug" | "enhancement" | null;
 const FOLLOW_UP_OPTIONAL_LABELS = ["status:backlog"] as const;
+
+export type ReviewPolicyProfile = {
+  autofix: boolean;
+  autopush: boolean;
+  publish: boolean;
+  strict: boolean;
+  maxAttempts: number;
+};
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   const parsed = JSON.parse(stdout) as unknown;
@@ -358,6 +368,46 @@ function extractReviewHeadMarkers(body: string): Set<string> {
   return heads;
 }
 
+function extractReviewPolicyMarkers(body: string): Set<string> {
+  const policies = new Set<string>();
+  let match: RegExpExecArray | null = REVIEW_POLICY_MARKER_REGEX.exec(body);
+  while (match) {
+    const value = String(match[1] ?? "")
+      .trim()
+      .toLowerCase();
+    if (value) policies.add(value);
+    match = REVIEW_POLICY_MARKER_REGEX.exec(body);
+  }
+  REVIEW_POLICY_MARKER_REGEX.lastIndex = 0;
+  return policies;
+}
+
+function normalizePolicyKey(policyKey: string | null | undefined): string | null {
+  if (typeof policyKey !== "string") return null;
+  const normalized = policyKey.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeMaxAttempts(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  const rounded = Math.trunc(value);
+  return rounded < 1 ? 1 : rounded;
+}
+
+export function buildReviewPolicyKey(profile: ReviewPolicyProfile): string {
+  const maxAttempts = normalizeMaxAttempts(profile.maxAttempts);
+  return [
+    "v1",
+    `autofix=${profile.autofix ? "1" : "0"}`,
+    `autopush=${profile.autopush ? "1" : "0"}`,
+    `publish=${profile.publish ? "1" : "0"}`,
+    `strict=${profile.strict ? "1" : "0"}`,
+    `max_attempts=${String(maxAttempts)}`,
+  ]
+    .join(";")
+    .toLowerCase();
+}
+
 async function upsertReviewSummaryComment(
   execaFn: ExecaFn,
   repo: string,
@@ -391,18 +441,29 @@ async function upsertReviewSummaryComment(
   return parsePositiveInt(parsed.id);
 }
 
-export async function hasReviewForHead(execaFn: ExecaFn, repo: string, prNumber: number, headSha: string): Promise<boolean> {
+export async function hasReviewForHead(
+  execaFn: ExecaFn,
+  repo: string,
+  prNumber: number,
+  headSha: string,
+  options?: {
+    policyKey?: string | null;
+  },
+): Promise<boolean> {
   if (prNumber <= 0 || !headSha.trim()) return false;
   const target = headSha.trim().toLowerCase();
+  const targetPolicy = normalizePolicyKey(options?.policyKey);
   const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/issues/${prNumber}/comments`, "gh issue comments");
 
   for (const row of rows) {
     const body = parseNullableString(row.body);
     if (!body || !body.includes(REVIEW_SUMMARY_MARKER)) continue;
     const heads = extractReviewHeadMarkers(body);
-    if (heads.has(target)) {
-      return true;
-    }
+    if (!heads.has(target)) continue;
+    if (!targetPolicy) return true;
+
+    const policyMarkers = extractReviewPolicyMarkers(body);
+    if (!policyMarkers.size || policyMarkers.has(targetPolicy)) return true;
   }
 
   return false;
@@ -859,11 +920,21 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
   };
 }
 
-export function buildReviewSummaryBody(markdown: string, headSha: string | null = null): string {
+export function buildReviewSummaryBody(
+  markdown: string,
+  headSha: string | null = null,
+  options?: {
+    policyKey?: string | null;
+  },
+): string {
   const lines = [REVIEW_SUMMARY_MARKER];
   const normalizedHead = typeof headSha === "string" ? headSha.trim().toLowerCase() : "";
   if (normalizedHead) {
     lines.push(`${REVIEW_HEAD_MARKER_PREFIX}${normalizedHead} -->`);
+  }
+  const normalizedPolicy = normalizePolicyKey(options?.policyKey);
+  if (normalizedPolicy) {
+    lines.push(`${REVIEW_POLICY_MARKER_PREFIX}${normalizedPolicy} -->`);
   }
   lines.push(markdown.trim());
   return `${lines.join("\n")}\n`;

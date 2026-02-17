@@ -11,6 +11,7 @@ export * from "./review-provider";
 export * from "./review-pr";
 export * from "./review-postflight";
 export * from "./review";
+export * from "./review-threads";
 export * from "./pr-open";
 export * from "./branch-cleanup";
 export * from "./security-scan";
