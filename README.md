@@ -239,9 +239,10 @@ Options:
 
 Review gate behavior:
 
-- Default `pr open` enforces review execution for the current `HEAD`.
+- Default `pr open` enforces review execution for the target PR branch `HEAD` (resolved from `--branch`/turn/current branch).
 - Dedupe is marker-based on PR comments: `<!-- vibe:review-summary -->` + `<!-- vibe:review-head:<sha> -->`.
-- If the current HEAD already has a summary marker, gate is satisfied and review is not re-run.
+- If the target branch HEAD already has a summary marker, gate is satisfied and review is not re-run.
 - If marker is missing, `pr open` auto-runs `vibe review` (full profile, non-strict).
+- For non-dry-run gate execution, target branch must be checked out before auto-review can run.
 - If `--skip-review-gate` is set, no auto-review runs; PR receives `<!-- vibe:review-gate-skipped -->`.
 - If `pr open` creates a PR and auto-review fails, the PR remains open and command exits with error.

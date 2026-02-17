@@ -122,7 +122,7 @@ describe.sequential("cli pr open", () => {
         expect(body).toContain("Fixes #6");
         return { stdout: "https://example.test/pull/60\n" };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
@@ -185,7 +185,7 @@ describe.sequential("cli pr open", () => {
           }),
         };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
@@ -243,7 +243,7 @@ describe.sequential("cli pr open", () => {
         expect(full).toContain("--head feature/custom");
         return { stdout: "https://example.test/pull/62\n" };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
@@ -373,7 +373,7 @@ describe.sequential("cli pr open", () => {
           }),
         };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
@@ -422,7 +422,7 @@ describe.sequential("cli pr open", () => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
         return { stdout: "issue-6-vibe-pr-open\n" };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") {
@@ -525,7 +525,7 @@ describe.sequential("cli pr open", () => {
           }),
         };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
@@ -560,6 +560,115 @@ describe.sequential("cli pr open", () => {
     expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
   });
 
+  it("uses target branch HEAD for gate checks when --branch differs from checkout", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 81,
+              title: "feat: target branch PR",
+              url: "https://example.test/pull/81",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "target branch issue",
+            url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "feature/custom") {
+        return { stdout: "abcdef1234567890\n" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/81/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 1,
+              body: "<!-- vibe:review-summary -->\n<!-- vibe:review-head:abcdef1234567890 -->\nsummary",
+            },
+          ]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open", "--issue", "6", "--branch", "feature/custom"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review gate satisfied for HEAD abcdef123456"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "rev-parse" && args[1] === "feature/custom",
+      ),
+    ).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
+  });
+
+  it("fails gate if target branch is not checked out before mutable auto-review", async () => {
+    const errors: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 82,
+              title: "feat: target branch PR",
+              url: "https://example.test/pull/82",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "target branch issue",
+            url: "https://example.test/issues/6",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "feature/custom") {
+        return { stdout: "targetsha1234567890\n" };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/82/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "main\n" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "pr", "open", "--issue", "6", "--branch", "feature/custom"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("targets branch 'feature/custom' but current branch is 'main'"))).toBe(true);
+    expect(execaMock.mock.calls.some(([cmd]) => cmd === "zsh")).toBe(false);
+  });
+
   it("runs review in dry-run mode when gate is active", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
@@ -574,7 +683,7 @@ describe.sequential("cli pr open", () => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
         return { stdout: "issue-6-vibe-pr-open\n" };
       }
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] !== "--abbrev-ref") {
         return { stdout: "abc123def\n" };
       }
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {

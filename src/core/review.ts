@@ -32,6 +32,8 @@ type ExecaFn = typeof execa;
 
 export type ReviewCommandOptions = {
   issueOverride?: string | number | null;
+  branchOverride?: string | null;
+  baseBranchOverride?: string | null;
   agentCmd?: string | null;
   agentProvider?: string | null;
   dryRun: boolean;
@@ -66,6 +68,7 @@ type ReviewRunContext = {
   issueId: number;
   branch: string;
   baseBranch: string;
+  currentBranch: string;
 };
 
 type ReviewBranchPrSnapshot = {
@@ -172,14 +175,22 @@ async function isWorkingTreeClean(execaFn: ExecaFn): Promise<boolean> {
   return response.stdout.trim() === "";
 }
 
-async function resolveReviewRunContext(execaFn: ExecaFn, issueOverride: string | number | null | undefined): Promise<ReviewRunContext> {
+async function resolveReviewRunContext(
+  execaFn: ExecaFn,
+  issueOverride: string | number | null | undefined,
+  branchOverride: string | null | undefined,
+  baseBranchOverride: string | null | undefined,
+): Promise<ReviewRunContext> {
   const overrideProvided = issueOverride !== undefined && issueOverride !== null && String(issueOverride).trim() !== "";
   const parsedOverride = parseIssueIdOverride(issueOverride);
   if (overrideProvided && parsedOverride === null) {
     throw new Error("review: --issue debe ser un entero positivo.");
   }
 
-  const branch = await resolveCurrentBranch(execaFn);
+  const currentBranch = await resolveCurrentBranch(execaFn);
+  const overrideBranch = typeof branchOverride === "string" ? branchOverride.trim() : "";
+  const branch = overrideBranch || currentBranch;
+  const overrideBaseBranch = typeof baseBranchOverride === "string" ? baseBranchOverride.trim() : "";
 
   let activeTurn: Awaited<ReturnType<typeof readTurnContext>> = null;
   let invalidTurnReason: string | null = null;
@@ -197,6 +208,7 @@ async function resolveReviewRunContext(execaFn: ExecaFn, issueOverride: string |
   const hasTurn = activeTurn !== null;
   const turnErrors = hasTurn ? validateTurnContext(activeTurn) : [];
   const validTurn = hasTurn && turnErrors.length === 0 ? activeTurn : null;
+  const turnMatchesBranch = validTurn !== null && validTurn.branch === branch;
 
   if (hasTurn && !validTurn) {
     invalidTurnReason = `missing/invalid: ${turnErrors.join(", ")}`;
@@ -213,7 +225,7 @@ async function resolveReviewRunContext(execaFn: ExecaFn, issueOverride: string |
 
   const prBodyInferredIssue = prSnapshot?.body ? extractIssueIdFromPrBody(prSnapshot.body) : null;
 
-  const issueId = parsedOverride ?? validTurn?.issue_id ?? branchInferredIssue ?? prBodyInferredIssue ?? null;
+  const issueId = parsedOverride ?? (turnMatchesBranch ? validTurn?.issue_id : null) ?? branchInferredIssue ?? prBodyInferredIssue ?? null;
   if (!issueId || !Number.isSafeInteger(issueId) || issueId <= 0) {
     if (invalidTurnReason) {
       const invalid = new Error(`review: invalid active turn (${invalidTurnReason}).`);
@@ -225,11 +237,12 @@ async function resolveReviewRunContext(execaFn: ExecaFn, issueOverride: string |
     throw unresolved;
   }
 
-  const baseBranch = validTurn?.base_branch ?? prSnapshot?.baseRefName ?? "main";
+  const baseBranch = overrideBaseBranch || (turnMatchesBranch ? validTurn?.base_branch : null) || prSnapshot?.baseRefName || "main";
   return {
     issueId,
     branch,
     baseBranch,
+    currentBranch,
   };
 }
 
@@ -369,9 +382,19 @@ export async function runReviewCommand(
 ): Promise<ReviewCommandResult> {
   const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
 
-  const context = await resolveReviewRunContext(execaFn, options.issueOverride);
+  const context = await resolveReviewRunContext(
+    execaFn,
+    options.issueOverride,
+    options.branchOverride,
+    options.baseBranchOverride,
+  );
 
   if (!options.dryRun) {
+    if (context.branch !== context.currentBranch) {
+      throw new Error(
+        `review: target branch '${context.branch}' is not checked out (current: '${context.currentBranch}'). Checkout the target branch or use --dry-run.`,
+      );
+    }
     const clean = await isWorkingTreeClean(execaFn);
     if (!clean) {
       throw new Error("review: working tree is not clean. Commit/stash changes or use --dry-run.");

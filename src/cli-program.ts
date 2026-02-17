@@ -295,13 +295,22 @@ async function listBranchPullRequestSnapshots(execaFn: ExecaFn, branch: string):
   return parsePullRequestSnapshots(response.stdout, "gh pr list");
 }
 
-async function resolveCurrentHeadSha(execaFn: ExecaFn): Promise<string> {
-  const response = await execaFn("git", ["rev-parse", "HEAD"], { stdio: "pipe" });
+async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<string> {
+  const response = await execaFn("git", ["rev-parse", ref], { stdio: "pipe" });
   const head = response.stdout.trim();
   if (!head) {
-    throw new Error("unable to resolve current HEAD sha");
+    throw new Error(`unable to resolve git ref HEAD sha for '${ref}'`);
   }
   return head;
+}
+
+async function resolveCurrentBranchName(execaFn: ExecaFn): Promise<string> {
+  const response = await execaFn("git", ["rev-parse", "--abbrev-ref", "HEAD"], { stdio: "pipe" });
+  const branch = response.stdout.trim();
+  if (!branch || branch === "HEAD") {
+    throw new Error("unable to resolve current git branch");
+  }
+  return branch;
 }
 
 function parseCurrentBranchFromStatus(statusOutput: string): string | null {
@@ -729,7 +738,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           return;
         }
 
-        const headSha = await resolveCurrentHeadSha(execaFn);
+        const headSha = await resolveGitRefHeadSha(execaFn, result.branch);
         const shortHead = headSha.slice(0, 12);
 
         if (skipReviewGate) {
@@ -759,10 +768,21 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           return;
         }
 
+        if (!result.dryRun) {
+          const currentBranch = await resolveCurrentBranchName(execaFn);
+          if (currentBranch !== result.branch) {
+            throw new Error(
+              `pr open: review gate targets branch '${result.branch}' but current branch is '${currentBranch}'. Checkout '${result.branch}' or run with --skip-review-gate.`,
+            );
+          }
+        }
+
         console.log(`pr open: review gate missing for HEAD ${shortHead}; running vibe review...`);
         const reviewResult = await runReviewCommand(
           {
             issueOverride: result.issueId,
+            branchOverride: result.branch,
+            baseBranchOverride: result.baseBranch,
             agentProvider: "auto",
             agentCmd: null,
             dryRun: result.dryRun,

@@ -14,6 +14,7 @@ const DEFAULT_BACKOFF_MS = [250, 750, 1500] as const;
 export type GhRetryOptions = {
   attempts?: number;
   backoffMs?: number[];
+  idempotent?: boolean;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -58,6 +59,29 @@ export function isRetryableGhError(error: unknown): boolean {
   );
 }
 
+export function isIdempotentGhCommand(args: string[]): boolean {
+  if (!args.length) return false;
+  const [scope, command] = args;
+
+  if (scope === "repo" && command === "view") return true;
+  if (scope === "issue" && (command === "view" || command === "list")) return true;
+  if (scope === "pr" && (command === "view" || command === "list")) return true;
+  if (scope === "label" && command === "list") return true;
+
+  if (scope === "api") {
+    const methodFlagIndex = args.findIndex((entry) => entry === "--method" || entry === "-X");
+    if (methodFlagIndex < 0) {
+      return true;
+    }
+    const method = String(args[methodFlagIndex + 1] ?? "GET")
+      .trim()
+      .toUpperCase();
+    return method === "GET";
+  }
+
+  return false;
+}
+
 export async function runGhWithRetry(
   execaFn: ExecaFn,
   args: string[],
@@ -65,7 +89,9 @@ export async function runGhWithRetry(
   options: GhRetryOptions = {},
 ): Promise<GhCommandResult> {
   const backoff = options.backoffMs && options.backoffMs.length > 0 ? options.backoffMs : Array.from(DEFAULT_BACKOFF_MS);
-  const attempts = Math.max(1, Math.trunc(options.attempts ?? backoff.length));
+  const configuredAttempts = Math.max(1, Math.trunc(options.attempts ?? backoff.length));
+  const idempotent = options.idempotent ?? isIdempotentGhCommand(args);
+  const attempts = idempotent ? configuredAttempts : 1;
 
   let lastError: unknown;
   const invokeGh = execaFn as unknown as (
@@ -83,7 +109,7 @@ export async function runGhWithRetry(
       };
     } catch (error) {
       lastError = error;
-      const canRetry = attempt < attempts && isRetryableGhError(error);
+      const canRetry = idempotent && attempt < attempts && isRetryableGhError(error);
       if (!canRetry) {
         throw error;
       }
