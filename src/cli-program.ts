@@ -83,6 +83,18 @@ function parseJsonArray(stdout: string, context: string): JsonRecord[] {
   return parsed.filter((value): value is JsonRecord => typeof value === "object" && value !== null);
 }
 
+function parseJsonObject(stdout: string, context: string): JsonRecord {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${context}: expected object response`);
+  }
+  return parsed as JsonRecord;
+}
+
+function parseNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
 function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
@@ -326,6 +338,18 @@ async function findOpenPullRequestNumberByBranch(execaFn: ExecaFn, branch: strin
   return null;
 }
 
+async function resolvePullRequestHeadSha(execaFn: ExecaFn, prNumber: number): Promise<string> {
+  const viewed = await runGhWithRetry(execaFn, ["pr", "view", String(prNumber), "--json", "headRefOid"], {
+    stdio: "pipe",
+  });
+  const row = parseJsonObject(viewed.stdout, "gh pr view");
+  const headSha = parseNullableString(row.headRefOid);
+  if (!headSha) {
+    throw new Error(`postflight --apply: unable to resolve headRefOid for PR #${prNumber}`);
+  }
+  return headSha;
+}
+
 async function resolveGitRefHeadSha(execaFn: ExecaFn, ref: string): Promise<string> {
   const response = await execaFn("git", ["rev-parse", ref], { stdio: "pipe" });
   const head = response.stdout.trim();
@@ -351,7 +375,7 @@ async function enforcePostflightApplyReviewGate(params: {
   if (!prNumber) return;
 
   const repo = await resolveRepoNameWithOwner(execaFn);
-  const headSha = await resolveGitRefHeadSha(execaFn, normalizedBranch);
+  const headSha = await resolvePullRequestHeadSha(execaFn, prNumber);
   const hasReview = await hasReviewForHead(execaFn, repo, prNumber, headSha);
   if (hasReview) return;
 
