@@ -51,6 +51,8 @@ describe.sequential("cli init", () => {
     expect(existsSync(path.join(tempDir, ".vibe", "contract.yml"))).toBe(true);
     expect(existsSync(path.join(tempDir, ".vibe", "ownership.yml"))).toBe(true);
     expect(existsSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"))).toBe(true);
+    expect(readFileSync(path.join(tempDir, ".vibe", "contract.yml"), "utf8")).toContain("gitleaks:");
+    expect(readFileSync(path.join(tempDir, ".vibe", "contract.yml"), "utf8")).toContain("policy: warn");
     expect(existsSync(path.join(tempDir, "AGENTS.md"))).toBe(true);
     expect(readFileSync(path.join(tempDir, "AGENTS.md"), "utf8")).toContain("<!-- vibe:agent-snippet:start -->");
     expect(readFileSync(path.join(tempDir, ".gitignore"), "utf8")).toContain(".vibe/runtime");

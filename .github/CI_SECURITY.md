@@ -25,4 +25,10 @@ This policy applies to all workflows in this repository.
 - [ ] No step dumps full environment/context to logs.
 - [ ] Artifact paths are explicit and exclude sensitive files.
 - [ ] Artifact retention is short and justified.
-- [ ] Secret scan runs (for example gitleaks) in CI before publish/release.
+- [ ] Secret scan runs in CI before publish/release (`.github/workflows/gitleaks.yml`).
+
+## Repository Workflow
+
+- This repository enforces gitleaks in CI using:
+  - `.github/workflows/gitleaks.yml`
+- The workflow runs on pull requests, pushes to `main`, and manual dispatch.

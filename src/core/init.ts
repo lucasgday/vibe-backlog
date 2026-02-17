@@ -35,6 +35,10 @@ interaction_contract:
       - next_actions
       - risks_and_rollbacks
 
+security:
+  gitleaks:
+    policy: warn
+
 editing_rules:
   agent:
     append_only_default: true

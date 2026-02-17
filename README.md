@@ -117,12 +117,13 @@ vibe postflight --apply
 # vibe postflight --apply --skip-branch-cleanup
 ```
 
-`preflight` now prints a hint when `.vibe` exists but tracker bootstrap marker is missing.
+`preflight` now prints a security snapshot (policy, gitleaks availability, last scan) and a hint when `.vibe` exists but tracker bootstrap marker is missing.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
 `postflight --apply` now runs automatic local branch cleanup for `upstream gone` branches (safe delete for merged, force delete for patch-equivalent, non-merged require explicit manual confirmation). Use `--skip-branch-cleanup` to bypass it.
 `branch cleanup` provides explicit cleanup control, including dry-run planning and guarded force path for non-merged branches.
+`security scan` runs gitleaks in `staged`, `working-tree`, or `history` mode with configurable `warn|fail` policy (`.vibe/contract.yml` by default).
 `review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain.
 `pr open` creates/reuses an open PR for the issue, injects deterministic architecture/rationale sections plus `Fixes #<issue>`, and enforces a review gate by HEAD marker (unless explicitly skipped).
 `tracker reconcile` fills missing `module:*` labels and milestone metadata using repo-specific taxonomy/history, with interactive or flag-based fallbacks.
@@ -151,6 +152,9 @@ Use these for deterministic execution:
 pnpm build
 node dist/cli.cjs preflight
 node dist/cli.cjs status
+node dist/cli.cjs security scan --dry-run
+node dist/cli.cjs security scan --mode staged
+node dist/cli.cjs security scan --mode history --policy fail
 node dist/cli.cjs branch cleanup --dry-run
 node dist/cli.cjs branch cleanup
 node dist/cli.cjs branch cleanup --force-unmerged --yes
@@ -189,7 +193,36 @@ Policy:
 - Deletion mode:
   - merged into base -> `git branch -d`
   - patch-equivalent -> `git branch -D`
-  - non-merged -> skipped unless `--force-unmerged --yes`
+- non-merged -> skipped unless `--force-unmerged --yes`
+
+## `vibe security scan` command reference
+
+```bash
+vibe security scan [options]
+```
+
+Options:
+
+- `--mode <staged|working-tree|history>`: scan scope (default `staged`).
+- `--policy <warn|fail>`: override policy for current run.
+- `--dry-run`: print resolved command/policy without running gitleaks.
+
+Policy resolution:
+
+1. `--policy` flag (if provided)
+2. `.vibe/contract.yml` -> `security.gitleaks.policy`
+3. default `warn`
+
+Behavior:
+
+- `warn`: findings/missing gitleaks are reported but do not fail command.
+- `fail`: findings/missing gitleaks fail command (exit code `1`).
+- Last scan summary is stored at `.vibe/runtime/security-scan.json` for `preflight` visibility.
+
+Portability note:
+
+- The CLI security scan is intended for any repo using `.vibe` + `vibe`.
+- This repository includes CI wiring for gitleaks; `vibe init` does not scaffold that workflow yet.
 
 ## `vibe tracker reconcile` command reference
 

@@ -29,6 +29,17 @@ import { runPrOpenCommand } from "./core/pr-open";
 import { hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
 import { runGhWithRetry } from "./core/gh-retry";
 import { runBranchCleanup, type BranchCleanupResult } from "./core/branch-cleanup";
+import {
+  normalizeSecurityPolicy,
+  normalizeSecurityScanMode,
+  probeGitleaksAvailability,
+  readLastSecurityScan,
+  resolveSecurityPolicy,
+  runSecurityScan,
+  SECURITY_POLICY_VALUES,
+  SECURITY_SCAN_MODE_VALUES,
+  type SecurityScanResult,
+} from "./core/security-scan";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -86,6 +97,86 @@ function printBranchCleanupReport(result: BranchCleanupResult, context: "standal
     console.log("\nbranch cleanup warnings:");
     for (const warning of result.warnings) {
       console.log(`- ${warning}`);
+    }
+  }
+}
+
+function printSecurityScanReport(result: SecurityScanResult): void {
+  console.log(
+    `security scan: mode=${result.mode} policy=${result.policy} source=${result.policySource} dry-run=${result.dryRun ? "yes" : "no"}`,
+  );
+  console.log(`gitleaks: ${result.gitleaksAvailable ? "available" : "missing"}`);
+  if (result.gitleaksLocation) {
+    console.log(`gitleaks path: ${result.gitleaksLocation}`);
+  }
+
+  if (result.status === "planned") {
+    console.log(`planned command: ${result.command}`);
+  } else {
+    console.log(`scan status: ${result.status}`);
+  }
+
+  if (result.detail) {
+    console.log(`scan detail: ${result.detail}`);
+  }
+
+  if (result.recordWritten) {
+    console.log(`last scan record: ${result.recordPath}`);
+  }
+
+  if (result.warnings.length) {
+    console.log("security scan warnings:");
+    for (const warning of result.warnings) {
+      console.log(`- ${warning}`);
+    }
+  }
+
+  if (result.remediation.length) {
+    console.log("security scan remediation:");
+    for (const step of result.remediation) {
+      console.log(`- ${step}`);
+    }
+  }
+}
+
+async function printPreflightSecuritySummary(execaFn: ExecaFn): Promise<void> {
+  try {
+    const [policyResolution, gitleaksProbe, lastScan] = await Promise.all([
+      resolveSecurityPolicy({}),
+      probeGitleaksAvailability(execaFn),
+      readLastSecurityScan(),
+    ]);
+
+    console.log("\nSecurity scan:");
+    console.log(`policy: ${policyResolution.policy} (source=${policyResolution.source})`);
+    console.log(`gitleaks: ${gitleaksProbe.available ? "available" : "missing"}`);
+    if (gitleaksProbe.available && gitleaksProbe.location) {
+      console.log(`gitleaks path: ${gitleaksProbe.location}`);
+    }
+
+    if (lastScan) {
+      console.log(`last scan: ${lastScan.status} mode=${lastScan.mode} policy=${lastScan.policy} at=${lastScan.scanned_at}`);
+    } else {
+      console.log("last scan: none");
+    }
+
+    if (!gitleaksProbe.available) {
+      console.log("Install gitleaks: https://github.com/gitleaks/gitleaks#installing");
+      console.log("Run: node dist/cli.cjs security scan --mode staged");
+    }
+
+    if (policyResolution.warnings.length) {
+      console.log("security scan warnings:");
+      for (const warning of policyResolution.warnings) {
+        console.log(`- ${warning}`);
+      }
+    }
+  } catch (error) {
+    console.log("\nSecurity scan: unavailable");
+    if (error instanceof Error && error.message) {
+      console.log(error.message);
+    } else {
+      console.log(String(error));
     }
   }
 }
@@ -1064,6 +1155,51 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       }
     });
 
+  const security = program.command("security").description("Security scanning and policy checks");
+
+  security
+    .command("scan")
+    .description("Run gitleaks scan for staged/worktree/history content")
+    .option("--mode <mode>", `Scan mode (${SECURITY_SCAN_MODE_VALUES.join("|")})`, "staged")
+    .option("--policy <policy>", `Policy override (${SECURITY_POLICY_VALUES.join("|")})`)
+    .option("--dry-run", "Print resolved command/policy without executing gitleaks", false)
+    .action(async (opts) => {
+      const modeRaw = typeof opts.mode === "string" ? opts.mode : "staged";
+      const mode = normalizeSecurityScanMode(modeRaw);
+      if (!mode) {
+        console.error(`security scan: --mode must be one of: ${SECURITY_SCAN_MODE_VALUES.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      const policyRaw = typeof opts.policy === "string" ? opts.policy : null;
+      const policyOverride = policyRaw ? normalizeSecurityPolicy(policyRaw) : null;
+      if (policyRaw && !policyOverride) {
+        console.error(`security scan: --policy must be one of: ${SECURITY_POLICY_VALUES.join(", ")}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        const result = await runSecurityScan(
+          {
+            mode,
+            policyOverride,
+            dryRun: Boolean(opts.dryRun),
+          },
+          execaFn,
+        );
+        printSecurityScanReport(result);
+        if (result.exitCode !== 0) {
+          process.exitCode = result.exitCode;
+        }
+      } catch (error) {
+        console.error("security scan: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
   const tracker = program.command("tracker").description("Manage tracker bootstrap for current repository");
 
   tracker
@@ -1541,6 +1677,8 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         printIssueBlock("In-progress issues", findInProgressIssues(snapshots), 10);
         printHygieneWarnings(snapshots);
       }
+
+      await printPreflightSecuritySummary(execaFn);
 
       try {
         const shouldHint = await shouldSuggestTrackerBootstrap();
