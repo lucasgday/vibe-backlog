@@ -35,3 +35,15 @@ Automated coverage is aligned with requested behavior and guardrails. Residual r
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:03:20.851Z
+- run_id: issue-37-pr-49-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Test coverage is broad for merge/patch/non-merged paths and postflight integration, but one regression vector is not asserted.
+
+### Findings
+- [P3] Missing test asserting side-effect-free dry-run for cleanup path (tests/cli-postflight.test.ts:572)

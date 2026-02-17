@@ -22,3 +22,15 @@ Operational behavior is stable and safer for day-to-day CLI loops: branch hygien
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:03:20.852Z
+- run_id: issue-37-pr-49-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operationally solid overall (postflight resilience and warning-and-continue behavior), with the main concern being dry-run mutability under constrained environments.
+
+### Findings
+- none

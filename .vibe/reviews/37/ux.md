@@ -1,0 +1,25 @@
+# UX Pass
+
+## Review Focus
+- Flow touched:
+- Accessibility/performance checks:
+
+## Checklist
+- [ ] Empty and error states reviewed
+- [ ] Copy and affordances reviewed
+- [ ] Interaction quality reviewed
+
+## Notes
+- 
+
+## Run 2026-02-17T19:03:20.852Z
+- run_id: issue-37-pr-49-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+CLI output is generally deterministic and actionable (clear summaries and remediation commands). No UX-specific defects found for this non-UI change.
+
+### Findings
+- none

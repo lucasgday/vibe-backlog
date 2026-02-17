@@ -23,3 +23,15 @@ No security regressions identified. The cleanup logic uses safe-by-default seman
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:03:20.851Z
+- run_id: issue-37-pr-49-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No direct security vulnerabilities found in authz/input/data-exposure surfaces for this diff; guardrails for destructive paths are present (`--force-unmerged` requires `--yes`).
+
+### Findings
+- none

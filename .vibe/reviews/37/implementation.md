@@ -30,3 +30,15 @@ Implementation is complete for the agreed behavior: automatic cleanup in postfli
 
 ### Findings
 - none
+
+## Run 2026-02-17T19:03:20.850Z
+- run_id: issue-37-pr-49-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Core branch-cleanup design is clear and mostly aligned with issue #37 guardrails, but there is one behavioral regression in dry-run semantics.
+
+### Findings
+- [P2] postflight dry-run triggers fetch/prune side effects (src/core/branch-cleanup.ts:206)
