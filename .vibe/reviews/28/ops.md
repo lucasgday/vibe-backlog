@@ -33,3 +33,15 @@ Operational behavior regresses in preflight cost due to a full reconcile scan on
 
 ### Findings
 - [P2] Preflight now triggers full-repo reconcile reads (src/cli-program.ts:401)
+
+## Run 2026-02-18T23:29:39.209Z
+- run_id: review-issue-28-pr-61-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Preflight milestone suggestions now use local snapshot semantics instead of full reconcile API scans, reducing operational overhead.
+
+### Findings
+- none
