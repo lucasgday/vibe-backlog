@@ -192,32 +192,6 @@ describe.sequential("cli status and preflight snapshots", () => {
       if (cmd === "gitleaks" && args[0] === "version") {
         return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
-      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
-        return { stdout: "acme/demo\n" };
-      }
-      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
-        return { stdout: JSON.stringify([{ name: "module:billing" }]) };
-      }
-      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
-        return { stdout: JSON.stringify([{ title: "Billing: Retry Hardening" }]) };
-      }
-      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=all&per_page=100&page=1") {
-        return {
-          stdout: JSON.stringify([
-            {
-              number: 50,
-              title: "retry hardening",
-              state: "open",
-              labels: [{ name: "module:billing" }],
-              milestone: null,
-              body: "billing retries",
-            },
-          ]),
-        };
-      }
-      if (cmd === "gh" && args[0] === "api") {
-        return { stdout: "[]" };
-      }
       return { stdout: "" };
     });
 
@@ -231,6 +205,11 @@ describe.sequential("cli status and preflight snapshots", () => {
 
     expect(logs.some((line) => line.includes("Milestone suggestions:"))).toBe(true);
     expect(logs.some((line) => line.includes("#50 -> Billing: Retry Hardening"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && typeof args[0] === "string" && args[0] === "api",
+      ),
+    ).toBe(false);
   });
 
   it("keeps preflight non-blocking when security probe fails", async () => {

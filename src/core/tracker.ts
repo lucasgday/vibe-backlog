@@ -154,6 +154,14 @@ export type SemanticMilestoneSuggestion = {
   requiresCreation: boolean;
 };
 
+export type SemanticMilestoneIssueSeed = {
+  number: number;
+  title: string;
+  body?: string;
+  labels?: string[];
+  milestone?: string | null;
+};
+
 export type TrackerReconcilePromptRequest = {
   kind: "module" | "milestone";
   issueNumber: number;
@@ -209,7 +217,12 @@ function normalizeTrackerLabelName(value: string): string {
 }
 
 function normalizeMilestoneTitle(value: string): string {
-  return value.trim().toLowerCase();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ": ")
+    .replace(/\s*\/\s*/g, "/");
 }
 
 function toTitleCaseToken(token: string): string {
@@ -364,6 +377,50 @@ function parseRepositoryLabelNames(rows: JsonRecord[]): string[] {
     .filter((value): value is string => typeof value === "string")
     .map((name) => name.trim())
     .filter(Boolean);
+}
+
+function coerceSemanticIssueSeed(seed: SemanticMilestoneIssueSeed): TrackerIssueSnapshot | null {
+  const number = seed.number;
+  if (!Number.isInteger(number) || number <= 0) {
+    return null;
+  }
+
+  const title = seed.title.trim();
+  if (!title) {
+    return null;
+  }
+
+  const body = typeof seed.body === "string" ? seed.body : "";
+  const labels = Array.isArray(seed.labels)
+    ? seed.labels
+        .map((label) => (typeof label === "string" ? label.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const milestoneRaw = typeof seed.milestone === "string" ? seed.milestone.trim() : "";
+
+  return {
+    number,
+    title,
+    body,
+    labels,
+    milestone: milestoneRaw || null,
+    state: "open",
+  };
+}
+
+function collectMilestoneTitlesFromIssues(issues: TrackerIssueSnapshot[]): string[] {
+  const seen = new Set<string>();
+  const titles: string[] = [];
+
+  for (const issue of issues) {
+    if (!issue.milestone) continue;
+    const normalized = normalizeMilestoneTitle(issue.milestone);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    titles.push(issue.milestone);
+  }
+
+  return titles;
 }
 
 function upsertWeightedToken(map: Map<string, number>, token: string, weight: number): void {
@@ -873,32 +930,15 @@ function resolveSemanticMilestoneFromContext(params: {
   };
 }
 
-export async function suggestSemanticMilestoneForIssue(
+function resolveSemanticMilestoneForIssueInput(
   params: {
     title: string;
     body?: string;
     labels?: string[];
     fallbackMilestone?: string | null;
   },
-  dependencies: {
-    execaFn?: ExecaFn;
-    repo?: string | null;
-  } = {},
-): Promise<SemanticMilestoneSuggestion> {
-  const execaFn = dependencies.execaFn ?? execa;
-  const repo = dependencies.repo?.trim() ? dependencies.repo.trim() : await resolveRepoNameWithOwner(execaFn);
-  const [labelNames, milestoneTitles, allIssues] = await Promise.all([
-    listRepositoryLabelNames(execaFn, repo),
-    listRepositoryMilestoneTitles(execaFn, repo),
-    listRepositoryIssues(execaFn, repo),
-  ]);
-
-  const context = buildTrackerSemanticContext({
-    labelNames,
-    milestoneTitles,
-    allIssues,
-  });
-
+  context: TrackerSemanticContext,
+): SemanticMilestoneSuggestion {
   const syntheticIssue: TrackerIssueSnapshot = {
     number: 0,
     title: params.title.trim(),
@@ -925,6 +965,80 @@ export async function suggestSemanticMilestoneForIssue(
     context,
     fallbackMilestone,
   });
+}
+
+export function suggestSemanticMilestonesForIssueSet(params: {
+  issues: SemanticMilestoneIssueSeed[];
+  fallbackMilestone?: string | null;
+}): Map<number, SemanticMilestoneSuggestion> {
+  const allIssues = params.issues
+    .map((issue) => coerceSemanticIssueSeed(issue))
+    .filter((issue): issue is TrackerIssueSnapshot => issue !== null);
+
+  if (!allIssues.length) {
+    return new Map();
+  }
+
+  const labelNames = Array.from(
+    new Set(
+      allIssues
+        .flatMap((issue) => issue.labels)
+        .map((label) => label.trim())
+        .filter(Boolean),
+    ),
+  );
+  const milestoneTitles = collectMilestoneTitlesFromIssues(allIssues);
+
+  const context = buildTrackerSemanticContext({
+    labelNames,
+    milestoneTitles,
+    allIssues,
+  });
+
+  const suggestions = new Map<number, SemanticMilestoneSuggestion>();
+  for (const issue of allIssues) {
+    if (issue.milestone) continue;
+    const suggestion = resolveSemanticMilestoneForIssueInput(
+      {
+        title: issue.title,
+        body: issue.body,
+        labels: issue.labels,
+        fallbackMilestone: params.fallbackMilestone,
+      },
+      context,
+    );
+    suggestions.set(issue.number, suggestion);
+  }
+
+  return suggestions;
+}
+
+export async function suggestSemanticMilestoneForIssue(
+  params: {
+    title: string;
+    body?: string;
+    labels?: string[];
+    fallbackMilestone?: string | null;
+  },
+  dependencies: {
+    execaFn?: ExecaFn;
+    repo?: string | null;
+  } = {},
+): Promise<SemanticMilestoneSuggestion> {
+  const execaFn = dependencies.execaFn ?? execa;
+  const repo = dependencies.repo?.trim() ? dependencies.repo.trim() : await resolveRepoNameWithOwner(execaFn);
+  const [labelNames, milestoneTitles, allIssues] = await Promise.all([
+    listRepositoryLabelNames(execaFn, repo),
+    listRepositoryMilestoneTitles(execaFn, repo),
+    listRepositoryIssues(execaFn, repo),
+  ]);
+
+  const context = buildTrackerSemanticContext({
+    labelNames,
+    milestoneTitles,
+    allIssues,
+  });
+  return resolveSemanticMilestoneForIssueInput(params, context);
 }
 
 export async function ensureRepositoryMilestone(params: {

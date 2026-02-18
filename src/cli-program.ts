@@ -11,6 +11,7 @@ import {
 import {
   runTrackerReconcile,
   selectMissingTrackerLabels,
+  suggestSemanticMilestonesForIssueSet,
   shouldSuggestTrackerBootstrap,
   type TrackerReconcilePromptRequest,
   writeTrackerBootstrapMarker,
@@ -393,37 +394,27 @@ function printHygieneWarnings(snapshots: IssueSnapshot[]): void {
   }
 }
 
-async function printPreflightMilestoneSuggestions(execaFn: ExecaFn, snapshots: IssueSnapshot[]): Promise<void> {
+async function printPreflightMilestoneSuggestions(snapshots: IssueSnapshot[]): Promise<void> {
   const missingMilestone = findIssuesMissingMilestone(snapshots);
   if (!missingMilestone.length) return;
 
   try {
-    const reconcilePlan = await runTrackerReconcile(
-      {
-        dryRun: true,
-      },
-      {
-        execaFn,
-        isInteractive: false,
-      },
-    );
-
-    const plannedByIssue = new Map<number, { milestone: string; source: string }>();
-    for (const update of reconcilePlan.issueUpdates) {
-      if (!update.setMilestone) continue;
-      plannedByIssue.set(update.issueNumber, {
-        milestone: update.setMilestone,
-        source: update.milestoneSource,
-      });
-    }
+    const plannedByIssue = suggestSemanticMilestonesForIssueSet({
+      issues: snapshots.map((issue) => ({
+        number: issue.number,
+        title: issue.title,
+        labels: issue.labels,
+        milestone: issue.milestone,
+      })),
+    });
 
     console.log("\nMilestone suggestions:");
     let printed = false;
     for (const issue of missingMilestone.slice(0, 10)) {
       const suggestion = plannedByIssue.get(issue.number);
-      if (!suggestion) continue;
+      if (!suggestion?.milestoneTitle) continue;
       const suffix = suggestion.source === "generated" ? " (new milestone candidate)" : ` (${suggestion.source})`;
-      console.log(`#${issue.number} -> ${suggestion.milestone}${suffix}`);
+      console.log(`#${issue.number} -> ${suggestion.milestoneTitle}${suffix}`);
       printed = true;
     }
     if (!printed) {
@@ -1912,7 +1903,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       if (ghIssueQueryOk) {
         printIssueBlock("In-progress issues", findInProgressIssues(snapshots), 10);
         printHygieneWarnings(snapshots);
-        await printPreflightMilestoneSuggestions(execaFn, snapshots);
+        await printPreflightMilestoneSuggestions(snapshots);
       }
 
       await printPreflightSecuritySummary(execaFn);

@@ -441,6 +441,38 @@ describe.sequential("tracker reconcile core", () => {
     expect(result.commands.some((args) => args[0] === "api" && args[1] === "--method" && args[2] === "POST")).toBe(false);
   });
 
+  it("reuses existing milestone when title differs only by internal whitespace", async () => {
+    const { execaMock } = createTrackerReconcileExecaMock({
+      repo: "acme/demo",
+      labels: ["module:billing"],
+      milestones: ["Billing:   Retry    Hardening"],
+      issues: [
+        apiIssue({
+          number: 43,
+          title: "retry hardening",
+          state: "open",
+          labels: ["module:billing"],
+          milestone: null,
+          body: "",
+        }),
+      ],
+    });
+
+    const result = await runTrackerReconcile(
+      {
+        dryRun: true,
+      },
+      {
+        execaFn: execaMock as never,
+        isInteractive: false,
+      },
+    );
+
+    expect(result.issueUpdates).toHaveLength(1);
+    expect(result.issueUpdates[0]?.setMilestone).toBe("Billing:   Retry    Hardening");
+    expect(result.commands.some((args) => args[0] === "api" && args[1] === "--method" && args[2] === "POST")).toBe(false);
+  });
+
   it("creates and assigns fallback module labels when missing from repository taxonomy", async () => {
     const { execaMock, calls } = createTrackerReconcileExecaMock({
       repo: "acme/demo",
