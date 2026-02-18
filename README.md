@@ -126,6 +126,7 @@ vibe postflight --apply
 `security scan` runs gitleaks in `staged`, `working-tree`, or `history` mode with configurable `warn|fail` policy (`.vibe/contract.yml` by default).
 `review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain.
 `pr open` creates/reuses an open PR for the issue, injects deterministic architecture/rationale sections plus `Fixes #<issue>`, and enforces a review gate by HEAD marker (unless explicitly skipped).
+`pr ready` validates final merge-readiness (`OPEN`, non-draft, `mergeStateStatus=CLEAN`, remote head sync, review marker) and prints non-destructive remediation for stale/desync states.
 `tracker reconcile` fills missing `module:*` labels and milestone metadata using repo-specific taxonomy/history, with interactive or flag-based fallbacks.
 
 ## Agent workflow (AGENTS.md)
@@ -163,6 +164,8 @@ node dist/cli.cjs review threads resolve --pr <n> --all-unresolved --dry-run
 node dist/cli.cjs review threads resolve --pr <n> --thread-id <id>
 node dist/cli.cjs pr open --dry-run --issue <n> --branch <name>
 node dist/cli.cjs pr open --force-review --issue <n> --branch <name>
+node dist/cli.cjs pr ready --pr <n> --wait-seconds 30
+node dist/cli.cjs pr ready --branch <name> --refresh --wait-seconds 30
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
 node dist/cli.cjs tracker bootstrap --dry-run
@@ -325,6 +328,33 @@ Review gate behavior:
 - If `--skip-review-gate` is set, no auto-review runs; PR receives `<!-- vibe:review-gate-skipped -->`.
 - `--skip-review-gate` and `--force-review` are mutually exclusive.
 - If `pr open` creates a PR and auto-review fails, the PR remains open and command exits with error.
+
+## `vibe pr ready` command reference
+
+```bash
+vibe pr ready [options]
+```
+
+Options:
+
+- `--pr <n>`: PR number override.
+- `--branch <name>`: branch override when resolving open PR without `--pr`.
+- `--refresh`: run `git fetch origin` before readiness checks.
+- `--wait-seconds <n>`: wait/poll window for `mergeStateStatus=UNKNOWN` (default `0`).
+
+Behavior:
+
+- Resolves exactly one open PR target (`--pr` explicit or by branch lookup).
+- Requires:
+  - PR `state=OPEN`
+  - PR `isDraft=false`
+  - `mergeStateStatus=CLEAN`
+  - `git ls-remote --heads origin <headRefName>` equals PR `headRefOid`
+  - review gate marker exists for current HEAD + policy key
+- On stale/unknown/desync failures, prints deterministic remediation:
+  - `node dist/cli.cjs pr ready --pr <n> --refresh --wait-seconds 30`
+- On success, prints freeze guidance before merge:
+  - do not run `vibe review`, `vibe pr open`, or push new commits.
 
 ## `vibe review threads resolve` command reference
 

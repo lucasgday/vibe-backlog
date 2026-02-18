@@ -26,7 +26,8 @@ import {
 } from "./core/review";
 import { REVIEW_AGENT_PROVIDER_VALUES } from "./core/review-provider";
 import { runPrOpenCommand } from "./core/pr-open";
-import { buildReviewPolicyKey, hasReviewForHead, postReviewGateSkipComment } from "./core/review-pr";
+import { runPrReadyCommand, type PrReadyResult } from "./core/pr-ready";
+import { hasReviewForHead, postReviewGateSkipComment, PR_OPEN_REVIEW_GATE_POLICY_KEY } from "./core/review-pr";
 import { resolveReviewThreads } from "./core/review-threads";
 import { runGhWithRetry } from "./core/gh-retry";
 import { runBranchCleanup, type BranchCleanupResult } from "./core/branch-cleanup";
@@ -47,13 +48,6 @@ const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
 const GUARD_INVALID_TURN_EXIT_CODE = 3;
 const GUARD_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
 const GH_API_PAGE_SIZE = 100;
-const PR_OPEN_REVIEW_GATE_POLICY_KEY = buildReviewPolicyKey({
-  autofix: true,
-  autopush: true,
-  publish: true,
-  strict: false,
-  maxAttempts: 5,
-});
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
@@ -144,6 +138,36 @@ function printSecurityScanReport(result: SecurityScanResult): void {
     for (const step of result.remediation) {
       console.log(`- ${step}`);
     }
+  }
+}
+
+function printPrReadyReport(result: PrReadyResult): void {
+  const prText = result.prNumber ? `#${result.prNumber}` : "(unresolved)";
+  const urlText = result.prUrl ?? "(no-url)";
+  console.log(`pr ready: ${result.ready ? "READY" : "NOT READY"} ${prText} ${urlText}`);
+
+  if (result.branch) {
+    console.log(`branch: ${result.branch}`);
+  }
+  if (result.baseBranch) {
+    console.log(`base: ${result.baseBranch}`);
+  }
+  if (result.headSha) {
+    console.log(`head: ${result.headSha}`);
+  }
+  if (result.mergeStateStatus) {
+    console.log(`mergeStateStatus: ${result.mergeStateStatus}`);
+  }
+
+  console.log("\nChecks:");
+  for (const check of result.checks) {
+    console.log(`- [${check.status}] ${check.label} (${check.id}): ${check.detail}`);
+  }
+
+  if (result.ready) {
+    console.log(`\n${result.freezeGuidance}`);
+  } else if (result.remediationCommand) {
+    console.log(`\nRemediation: ${result.remediationCommand}`);
   }
 }
 
@@ -1432,6 +1456,67 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         );
       } catch (error) {
         console.error("pr open: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  pr
+    .command("ready")
+    .description("Validate merge-readiness for an existing PR without mutating branch/PR state")
+    .option("--pr <n>", "PR number override (defaults to open PR on branch)")
+    .option("--branch <name>", "Branch override when resolving open PR without --pr")
+    .option("--refresh", "Fetch origin before evaluating readiness", false)
+    .option("--wait-seconds <n>", "Wait/poll seconds for UNKNOWN mergeStateStatus", "0")
+    .action(async (opts) => {
+      try {
+        const prRaw = typeof opts.pr === "string" ? opts.pr.trim() : "";
+        let prNumber: number | null = null;
+        if (prRaw) {
+          if (!/^[0-9]+$/.test(prRaw)) {
+            console.error("pr ready: --pr must be a positive integer.");
+            process.exitCode = 1;
+            return;
+          }
+          const parsed = Number(prRaw);
+          if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+            console.error("pr ready: --pr must be a positive integer.");
+            process.exitCode = 1;
+            return;
+          }
+          prNumber = parsed;
+        }
+
+        const waitRaw = typeof opts.waitSeconds === "string" ? opts.waitSeconds.trim() : "0";
+        if (!/^[0-9]+$/.test(waitRaw)) {
+          console.error("pr ready: --wait-seconds must be a non-negative integer.");
+          process.exitCode = 1;
+          return;
+        }
+        const waitSeconds = Number(waitRaw);
+        if (!Number.isSafeInteger(waitSeconds) || waitSeconds < 0) {
+          console.error("pr ready: --wait-seconds must be a non-negative integer.");
+          process.exitCode = 1;
+          return;
+        }
+
+        const branchOverride = typeof opts.branch === "string" ? opts.branch.trim() || null : null;
+        const result = await runPrReadyCommand(
+          {
+            prNumber,
+            branchOverride,
+            refresh: Boolean(opts.refresh),
+            waitSeconds,
+          },
+          execaFn,
+        );
+
+        printPrReadyReport(result);
+        if (!result.ready) {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        console.error("pr ready: ERROR");
         console.error(error);
         process.exitCode = 1;
       }

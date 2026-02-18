@@ -408,6 +408,14 @@ export function buildReviewPolicyKey(profile: ReviewPolicyProfile): string {
     .toLowerCase();
 }
 
+export const PR_OPEN_REVIEW_GATE_POLICY_KEY = buildReviewPolicyKey({
+  autofix: true,
+  autopush: true,
+  publish: true,
+  strict: false,
+  maxAttempts: 5,
+});
+
 async function upsertReviewSummaryComment(
   execaFn: ExecaFn,
   repo: string,
