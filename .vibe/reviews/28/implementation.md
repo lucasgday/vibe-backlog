@@ -27,3 +27,15 @@
 
 ## Findings
 - none
+
+## Run 2026-02-18T23:23:49.736Z
+- run_id: review-issue-28-pr-61-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The milestone inference/creation refactor is coherent, but dedupe normalization is incomplete and can create duplicate milestones for whitespace-equivalent titles.
+
+### Findings
+- [P1] Milestone dedupe misses whitespace-equivalent titles (src/core/tracker.ts:211)

@@ -29,3 +29,15 @@
 
 ## Findings
 - none
+
+## Run 2026-02-18T23:23:49.737Z
+- run_id: review-issue-28-pr-61-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage improved for semantic milestone flows, but one regression class is still untested.
+
+### Findings
+- [P2] Missing regression test for whitespace-normalized milestone reuse (tests/tracker.test.ts:412)

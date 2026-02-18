@@ -21,3 +21,15 @@
 
 ## Findings
 - none
+
+## Run 2026-02-18T23:23:49.738Z
+- run_id: review-issue-28-pr-61-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Operational behavior regresses in preflight cost due to a full reconcile scan on each run.
+
+### Findings
+- [P2] Preflight now triggers full-repo reconcile reads (src/cli-program.ts:401)
