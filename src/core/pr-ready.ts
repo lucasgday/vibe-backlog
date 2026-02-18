@@ -72,6 +72,11 @@ type PrSnapshot = {
   mergeStateStatus: string | null;
 };
 
+type RemoteHeadResolution = {
+  sha: string | null;
+  error: string | null;
+};
+
 type ClockRuntime = {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -225,11 +230,24 @@ async function waitForMergeStateClean(params: {
   return snapshot;
 }
 
-async function resolveRemoteBranchHeadSha(execaFn: ExecaFn, branch: string): Promise<string | null> {
-  const response = await execaFn("git", ["ls-remote", "--heads", "origin", branch], { stdio: "pipe" });
+async function resolveRemoteBranchHeadSha(execaFn: ExecaFn, branch: string): Promise<RemoteHeadResolution> {
+  const response = (await execaFn("git", ["ls-remote", "--heads", "origin", branch], {
+    stdio: "pipe",
+    reject: false,
+  })) as { stdout?: unknown; stderr?: unknown; exitCode?: unknown };
+  const exitCode = typeof response.exitCode === "number" ? response.exitCode : 0;
+  const stderr = typeof response.stderr === "string" ? response.stderr.trim() : "";
+  if (exitCode !== 0) {
+    return {
+      sha: null,
+      error: stderr || `git ls-remote failed with exit code ${exitCode}`,
+    };
+  }
+
+  const stdout = typeof response.stdout === "string" ? response.stdout : "";
   const targetRef = `refs/heads/${branch}`;
 
-  for (const rawLine of response.stdout.split(/\r?\n/)) {
+  for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
     const parts = line.split(/\s+/);
@@ -237,10 +255,16 @@ async function resolveRemoteBranchHeadSha(execaFn: ExecaFn, branch: string): Pro
     const [sha = "", ref = ""] = parts;
     if (ref !== targetRef) continue;
     if (!sha) continue;
-    return sha.toLowerCase();
+    return {
+      sha: sha.toLowerCase(),
+      error: null,
+    };
   }
 
-  return null;
+  return {
+    sha: null,
+    error: null,
+  };
 }
 
 function buildSkippedChecks(detail: string): PrReadyCheck[] {
@@ -391,8 +415,17 @@ export async function runPrReadyCommand(
       detail: "missing headRefName/headRefOid on PR snapshot",
     });
   } else {
-    const remoteHead = await resolveRemoteBranchHeadSha(execaFn, headRefName);
-    if (!remoteHead) {
+    const remoteHeadResolution = await resolveRemoteBranchHeadSha(execaFn, headRefName);
+    const remoteHead = remoteHeadResolution.sha;
+    if (remoteHeadResolution.error) {
+      headSyncFailed = true;
+      checks.push({
+        id: "head-sync",
+        label: "remote head matches PR headRefOid",
+        status: "fail",
+        detail: `unable to resolve remote head: ${remoteHeadResolution.error}`,
+      });
+    } else if (!remoteHead) {
       headSyncFailed = true;
       checks.push({
         id: "head-sync",

@@ -191,6 +191,59 @@ describe("pr ready command", () => {
     expect(result.remediationCommand).toBe("node dist/cli.cjs pr ready --pr 99 --refresh --wait-seconds 30");
   });
 
+  it("returns structured NOT READY when git ls-remote fails", async () => {
+    const headSha = "abc123def456abc123def456abc123def456abcd";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            number: 99,
+            url: "https://example.test/pull/99",
+            state: "OPEN",
+            isDraft: false,
+            headRefName: "codex/issue-56-pr-ready-merge-readiness",
+            headRefOid: headSha,
+            baseRefName: "main",
+            mergeStateStatus: "CLEAN",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return {
+          stdout: "",
+          stderr: "fatal: unable to access origin",
+          exitCode: 2,
+        };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([{ id: 1, body: buildReviewSummaryBody(headSha) }]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await runPrReadyCommand(
+      {
+        prNumber: 99,
+        branchOverride: null,
+        refresh: false,
+        waitSeconds: 0,
+      },
+      execaMock as never,
+    );
+
+    expect(result.ready).toBe(false);
+    const headSyncCheck = result.checks.find((check) => check.id === "head-sync");
+    expect(headSyncCheck?.status).toBe("fail");
+    expect(headSyncCheck?.detail).toContain("unable to resolve remote head");
+    expect(headSyncCheck?.detail).toContain("fatal: unable to access origin");
+    expect(result.remediationCommand).toBe("node dist/cli.cjs pr ready --pr 99 --refresh --wait-seconds 30");
+  });
+
   it("blocks readiness when review marker is missing for current head", async () => {
     const headSha = "abc123def456abc123def456abc123def456abcd";
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
@@ -237,6 +290,100 @@ describe("pr ready command", () => {
     expect(result.ready).toBe(false);
     expect(result.checks.find((check) => check.id === "review-marker")?.status).toBe("fail");
     expect(result.remediationCommand).toBeNull();
+  });
+
+  it("blocks readiness when PR state is CLOSED", async () => {
+    const headSha = "abc123def456abc123def456abc123def456abcd";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            number: 99,
+            url: "https://example.test/pull/99",
+            state: "CLOSED",
+            isDraft: false,
+            headRefName: "codex/issue-56-pr-ready-merge-readiness",
+            headRefOid: headSha,
+            baseRefName: "main",
+            mergeStateStatus: "CLEAN",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return {
+          stdout: `${headSha}\trefs/heads/codex/issue-56-pr-ready-merge-readiness\n`,
+        };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([{ id: 1, body: buildReviewSummaryBody(headSha) }]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await runPrReadyCommand(
+      {
+        prNumber: 99,
+        branchOverride: null,
+        refresh: false,
+        waitSeconds: 0,
+      },
+      execaMock as never,
+    );
+
+    expect(result.ready).toBe(false);
+    expect(result.checks.find((check) => check.id === "pr-open")?.status).toBe("fail");
+  });
+
+  it("blocks readiness when PR is draft", async () => {
+    const headSha = "abc123def456abc123def456abc123def456abcd";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            number: 99,
+            url: "https://example.test/pull/99",
+            state: "OPEN",
+            isDraft: true,
+            headRefName: "codex/issue-56-pr-ready-merge-readiness",
+            headRefOid: headSha,
+            baseRefName: "main",
+            mergeStateStatus: "CLEAN",
+          }),
+        };
+      }
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return {
+          stdout: `${headSha}\trefs/heads/codex/issue-56-pr-ready-merge-readiness\n`,
+        };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([{ id: 1, body: buildReviewSummaryBody(headSha) }]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await runPrReadyCommand(
+      {
+        prNumber: 99,
+        branchOverride: null,
+        refresh: false,
+        waitSeconds: 0,
+      },
+      execaMock as never,
+    );
+
+    expect(result.ready).toBe(false);
+    expect(result.checks.find((check) => check.id === "pr-not-draft")?.status).toBe("fail");
   });
 
   it("waits UNKNOWN merge state and passes when it transitions to CLEAN", async () => {
