@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   REVIEW_GATE_SKIPPED_MARKER,
+  REVIEW_POLICY_MARKER_PREFIX,
   REVIEW_SUMMARY_MARKER,
+  buildReviewPolicyKey,
   buildReviewSummaryBody,
   classifyFollowUpLabel,
   computeFindingFingerprint,
@@ -70,6 +72,29 @@ describe("review PR helpers", () => {
     expect(summary).toContain("summary text");
   });
 
+  it("builds stable policy key from review profile", () => {
+    const policyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    expect(policyKey).toBe("v1;autofix=1;autopush=1;publish=1;strict=0;max_attempts=5");
+  });
+
+  it("embeds policy marker in review summary body when provided", () => {
+    const policyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const summary = buildReviewSummaryBody("summary text", "abc123def", { policyKey });
+    expect(summary).toContain(`${REVIEW_POLICY_MARKER_PREFIX}${policyKey} -->`);
+  });
+
   it("detects reviewed head marker from PR comments", async () => {
     const summaryBody = buildReviewSummaryBody("summary", "abc123def");
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
@@ -81,6 +106,87 @@ describe("review PR helpers", () => {
 
     expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def")).toBe(true);
     expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "fff999")).toBe(false);
+  });
+
+  it("accepts legacy head-only review marker when policy key is requested", async () => {
+    const summaryBody = buildReviewSummaryBody("summary", "abc123def");
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ id: 1, body: summaryBody }]) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const policyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey })).toBe(true);
+  });
+
+  it("requires policy marker match when summary comment includes policy key", async () => {
+    const matchingPolicyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const mismatchedPolicyKey = buildReviewPolicyKey({
+      autofix: false,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const summaryBody = buildReviewSummaryBody("summary", "abc123def", { policyKey: mismatchedPolicyKey });
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ id: 1, body: summaryBody }]) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey: matchingPolicyKey })).toBe(
+      false,
+    );
+  });
+
+  it("does not allow legacy marker to bypass policy mismatch when mixed markers coexist", async () => {
+    const matchingPolicyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const mismatchedPolicyKey = buildReviewPolicyKey({
+      autofix: false,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+    });
+    const legacyBody = buildReviewSummaryBody("legacy summary", "abc123def");
+    const policyBody = buildReviewSummaryBody("policy summary", "abc123def", { policyKey: mismatchedPolicyKey });
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            { id: 1, body: legacyBody },
+            { id: 2, body: policyBody },
+          ]),
+        };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey: matchingPolicyKey })).toBe(
+      false,
+    );
   });
 
   it("posts review gate skip comment once per head marker", async () => {
