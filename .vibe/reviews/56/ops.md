@@ -22,3 +22,10 @@ No release/process blockers found; docs, exports, and command wiring are coheren
 
 ### Findings
 - none
+
+## 2026-02-18 Ops/Release Pass (follow-up #58)
+
+- Confirmed follow-up patch stays dependency-neutral and deterministic.
+- Verified command/test pipeline remains green after fix push:
+  - `pnpm test`
+  - `pnpm build`

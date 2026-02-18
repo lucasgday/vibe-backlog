@@ -35,3 +35,13 @@ Test suite is strong for happy/stale/desync paths, but one planned negative-path
 
 ### Findings
 - [P3] Missing explicit tests for CLOSED and draft PR blocking scenarios (tests/pr-ready.test.ts:15)
+
+## 2026-02-18 Quality Pass (follow-up #58)
+
+- Added explicit regressions in `tests/pr-ready.test.ts` for:
+  - structured handling of `git ls-remote` failure
+  - PR `CLOSED` blocking behavior
+  - PR `isDraft=true` blocking behavior
+- Re-ran verification:
+  - `pnpm test`
+  - `pnpm build`

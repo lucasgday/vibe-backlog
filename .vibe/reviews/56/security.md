@@ -23,3 +23,8 @@ No direct AppSec vulnerabilities identified in this diff; checks are read-only a
 
 ### Findings
 - none
+
+## 2026-02-18 Security Pass (follow-up #58)
+
+- Defensive failure handling improved: transient/remote git lookup failures now fail closed (`NOT READY`) instead of aborting the whole command unexpectedly.
+- This reduces operational ambiguity and keeps merge gate behavior deterministic under transport/network errors.

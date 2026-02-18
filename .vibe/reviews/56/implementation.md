@@ -30,3 +30,8 @@ Core merge-readiness flow is well-structured, but there is one reliability defec
 
 ### Findings
 - [P2] `pr ready` hard-fails on `git ls-remote` errors instead of returning structured `NOT READY` check output (src/core/pr-ready.ts:229)
+
+## 2026-02-18 Implementation Pass (follow-up #58)
+
+- Hardened `pr ready` remote head resolution path in `src/core/pr-ready.ts` so `git ls-remote` failures no longer throw hard errors.
+- The command now emits a structured `head-sync` failure (`NOT READY`) with actionable detail when remote lookup fails.
