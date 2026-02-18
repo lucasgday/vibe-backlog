@@ -358,6 +358,74 @@ describe("review PR helpers", () => {
     expect(result.label).toBe("enhancement");
   });
 
+  it("creates and assigns semantic milestone for follow-up issues when source milestone is missing", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:billing" }], body: "billing retries", milestone: null }) };
+      }
+      if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ name: "bug" }, { name: "status:backlog" }, { name: "module:billing" }]) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ name: "module:billing" }]) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=all&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 34,
+              title: "review command",
+              state: "open",
+              labels: [{ name: "module:billing" }],
+              milestone: null,
+              body: "retry hardening",
+            },
+          ]),
+        };
+      }
+      if (
+        cmd === "gh" &&
+        args[0] === "api" &&
+        args[1] === "--method" &&
+        args[2] === "POST" &&
+        args[3] === "repos/acme/demo/milestones"
+      ) {
+        const serialized = args.join(" ");
+        expect(serialized).toContain("title=Billing: Retry Hardening");
+        return { stdout: JSON.stringify({ title: "Billing: Retry Hardening" }) };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const serialized = args.join(" ");
+        expect(serialized).toContain("--milestone Billing: Retry Hardening");
+        return { stdout: "https://example.test/issues/504\n" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await createReviewFollowUpIssue({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      sourceIssueTitle: "retry hardening",
+      findings: [sampleFinding({ kind: "defect", severity: "P1" })],
+      reviewSummary: "summary",
+      milestoneTitle: null,
+      dryRun: false,
+      overrideLabel: null,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.number).toBe(504);
+  });
+
   it("updates existing open follow-up issue instead of creating duplicates", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {

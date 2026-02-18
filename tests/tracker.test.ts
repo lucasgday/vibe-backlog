@@ -61,6 +61,9 @@ function createTrackerReconcileExecaMock(data: {
     }
 
     if (args[0] === "api") {
+      if (args[1] === "--method" && args[2] === "POST" && args[3] === `repos/${data.repo}/milestones`) {
+        return { stdout: JSON.stringify({ title: "created" }) };
+      }
       const endpoint = args[1] ?? "";
 
       if (endpoint === `repos/${data.repo}/labels?per_page=100&page=1`) {
@@ -118,11 +121,11 @@ describe.sequential("tracker bootstrap core", () => {
     }
   });
 
-  it("selects missing milestones and labels deterministically", () => {
+  it("selects missing labels deterministically and keeps milestones repo-specific", () => {
     const missingMilestones = selectMissingTrackerMilestones(["UI MVP (local cockpit)"]);
     const missingLabels = selectMissingTrackerLabels(["Module:UI", "MODULE:docs"]);
 
-    expect(missingMilestones.map((item) => item.title)).toEqual(["CLI usable (repos con .vibe)"]);
+    expect(missingMilestones.map((item) => item.title)).toEqual([]);
     expect(missingLabels.map((item) => item.name)).toEqual([
       "module:cli",
       "module:tracker",
@@ -146,7 +149,7 @@ describe.sequential("tracker bootstrap core", () => {
     const payload = JSON.parse(readFileSync(markerPath, "utf8")) as Record<string, unknown>;
     expect(payload.version).toBe(1);
     expect(payload.repository).toBe("acme/demo");
-    expect(Array.isArray(payload.milestones)).toBe(true);
+    expect(payload.milestones).toEqual([]);
     expect(Array.isArray(payload.labels)).toBe(true);
   });
 });
@@ -250,7 +253,7 @@ describe.sequential("tracker reconcile core", () => {
     expect(result.issueUpdates[0]?.addLabels).toEqual(["module:api", "module:web"]);
   });
 
-  it("does not auto-assign module when score ratio is below threshold and degrades to plan-only in non-interactive apply", async () => {
+  it("creates semantic milestone even when module inference is ambiguous", async () => {
     const { execaMock, calls } = createTrackerReconcileExecaMock({
       repo: "acme/demo",
       labels: ["module:alpha", "module:beta"],
@@ -293,10 +296,20 @@ describe.sequential("tracker reconcile core", () => {
       },
     );
 
-    expect(result.degradedToPlanOnly).toBe(true);
-    expect(result.applied).toBe(false);
+    expect(result.degradedToPlanOnly).toBe(false);
+    expect(result.applied).toBe(true);
     expect(result.unresolvedIssueIds).toEqual([30]);
-    expect(calls.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit")).toBe(false);
+    expect(
+      calls.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          args[0] === "api" &&
+          args[1] === "--method" &&
+          args[2] === "POST" &&
+          args[3] === "repos/acme/demo/milestones",
+      ),
+    ).toBe(true);
+    expect(calls.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit" && args[2] === "30")).toBe(true);
   });
 
   it("uses fallback milestone when inferred confidence is below 80%", async () => {
@@ -364,6 +377,70 @@ describe.sequential("tracker reconcile core", () => {
     expect(result.issueUpdates[0]?.milestoneSource).toBe("fallback");
   });
 
+  it("plans delivery milestone creation when no existing milestone matches", async () => {
+    const { execaMock } = createTrackerReconcileExecaMock({
+      repo: "acme/demo",
+      labels: ["module:billing"],
+      milestones: [],
+      issues: [
+        apiIssue({
+          number: 41,
+          title: "retry hardening",
+          state: "open",
+          labels: ["module:billing"],
+          milestone: null,
+          body: "payment checkout retries",
+        }),
+      ],
+    });
+
+    const result = await runTrackerReconcile(
+      {
+        dryRun: true,
+      },
+      {
+        execaFn: execaMock as never,
+        isInteractive: false,
+      },
+    );
+
+    expect(result.issueUpdates).toHaveLength(1);
+    expect(result.issueUpdates[0]?.milestoneSource).toBe("generated");
+    expect(result.commands.some((args) => args[0] === "api" && args[1] === "--method" && args[2] === "POST")).toBe(true);
+  });
+
+  it("reuses existing milestone when generated title normalizes to existing one", async () => {
+    const { execaMock } = createTrackerReconcileExecaMock({
+      repo: "acme/demo",
+      labels: ["module:billing"],
+      milestones: ["Billing: Retry Hardening"],
+      issues: [
+        apiIssue({
+          number: 42,
+          title: "retry hardening",
+          state: "open",
+          labels: ["module:billing"],
+          milestone: null,
+          body: "",
+        }),
+      ],
+    });
+
+    const result = await runTrackerReconcile(
+      {
+        dryRun: true,
+      },
+      {
+        execaFn: execaMock as never,
+        isInteractive: false,
+      },
+    );
+
+    expect(result.issueUpdates).toHaveLength(1);
+    expect(result.issueUpdates[0]?.setMilestone).toBe("Billing: Retry Hardening");
+    expect(result.commands.some((args) => args[0] === "api" && args[1] === "--method" && args[2] === "POST")).toBe(false);
+  });
+
   it("creates and assigns fallback module labels when missing from repository taxonomy", async () => {
     const { execaMock, calls } = createTrackerReconcileExecaMock({
       repo: "acme/demo",
@@ -401,7 +478,7 @@ describe.sequential("tracker reconcile core", () => {
     expect(calls.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit" && args[2] === "50")).toBe(true);
   });
 
-  it("keeps exit-safe plan-only mode when decisions are missing without TTY", async () => {
+  it("keeps reconcile apply-safe in non-interactive mode by generating milestones", async () => {
     const { execaMock, calls } = createTrackerReconcileExecaMock({
       repo: "acme/demo",
       labels: ["module:ops"],
@@ -428,9 +505,8 @@ describe.sequential("tracker reconcile core", () => {
       },
     );
 
-    expect(result.degradedToPlanOnly).toBe(true);
-    expect(result.applied).toBe(false);
-    expect(result.planOnlyReason).toContain("non-interactive plan-only mode");
-    expect(calls.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit")).toBe(false);
+    expect(result.degradedToPlanOnly).toBe(false);
+    expect(result.applied).toBe(true);
+    expect(calls.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit")).toBe(true);
   });
 });

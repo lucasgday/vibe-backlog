@@ -168,6 +168,71 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("none"))).toBe(true);
   });
 
+  it("prints read-only semantic milestone suggestions in preflight", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## main" };
+      }
+      if (args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 50,
+              title: "retry hardening",
+              state: "OPEN",
+              labels: [{ name: "module:billing" }],
+              milestone: null,
+              updatedAt: "2026-02-18T12:00:00Z",
+              url: "https://example.test/issues/50",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ name: "module:billing" }]) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ title: "Billing: Retry Hardening" }]) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=all&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 50,
+              title: "retry hardening",
+              state: "open",
+              labels: [{ name: "module:billing" }],
+              milestone: null,
+              body: "billing retries",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "api") {
+        return { stdout: "[]" };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "preflight"]);
+
+    expect(logs.some((line) => line.includes("Milestone suggestions:"))).toBe(true);
+    expect(logs.some((line) => line.includes("#50 -> Billing: Retry Hardening"))).toBe(true);
+  });
+
   it("keeps preflight non-blocking when security probe fails", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {

@@ -61,6 +61,10 @@ The agent MUST NOT start implementation immediately. It MUST:
 - Every turn should update GitHub status labels via `postflight --apply`:
   - `status:backlog`, `status:in-progress`, `status:in-review`, `status:done`
 - If blocked, add a comment explaining the blocker and label (optional): `status:blocked` (if exists).
+- Milestones must be repo-specific and semantic:
+  - infer from issue title/body/module context
+  - reuse existing milestone when affinity is high
+  - if needed, create a new milestone as a delivery goal (not a fixed catalog name)
 
 ### Commands to prefer (avoid global-bin drift)
 - Always build before running vibe:

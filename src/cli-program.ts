@@ -11,7 +11,6 @@ import {
 import {
   runTrackerReconcile,
   selectMissingTrackerLabels,
-  selectMissingTrackerMilestones,
   shouldSuggestTrackerBootstrap,
   type TrackerReconcilePromptRequest,
   writeTrackerBootstrapMarker,
@@ -391,6 +390,47 @@ function printHygieneWarnings(snapshots: IssueSnapshot[]): void {
   if (missingModule.length) {
     const ids = missingModule.map((issue) => `#${issue.number}`).join(", ");
     console.log(`missing module label: ${ids}`);
+  }
+}
+
+async function printPreflightMilestoneSuggestions(execaFn: ExecaFn, snapshots: IssueSnapshot[]): Promise<void> {
+  const missingMilestone = findIssuesMissingMilestone(snapshots);
+  if (!missingMilestone.length) return;
+
+  try {
+    const reconcilePlan = await runTrackerReconcile(
+      {
+        dryRun: true,
+      },
+      {
+        execaFn,
+        isInteractive: false,
+      },
+    );
+
+    const plannedByIssue = new Map<number, { milestone: string; source: string }>();
+    for (const update of reconcilePlan.issueUpdates) {
+      if (!update.setMilestone) continue;
+      plannedByIssue.set(update.issueNumber, {
+        milestone: update.setMilestone,
+        source: update.milestoneSource,
+      });
+    }
+
+    console.log("\nMilestone suggestions:");
+    let printed = false;
+    for (const issue of missingMilestone.slice(0, 10)) {
+      const suggestion = plannedByIssue.get(issue.number);
+      if (!suggestion) continue;
+      const suffix = suggestion.source === "generated" ? " (new milestone candidate)" : ` (${suggestion.source})`;
+      console.log(`#${issue.number} -> ${suggestion.milestone}${suffix}`);
+      printed = true;
+    }
+    if (!printed) {
+      console.log("none");
+    }
+  } catch {
+    // Ignore suggestion failures: preflight must remain resilient.
   }
 }
 
@@ -878,41 +918,22 @@ async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<v
     listExistingMilestoneTitles(execaFn, repo),
     listExistingLabelNames(execaFn, repo),
   ]);
-  const milestonesToCreate = selectMissingTrackerMilestones(existingMilestones);
   const labelsToCreate = selectMissingTrackerLabels(existingLabels);
 
   console.log(`tracker bootstrap: repo ${repo}`);
-  if (!milestonesToCreate.length && !labelsToCreate.length) {
+  if (!labelsToCreate.length) {
     console.log("tracker bootstrap: already configured.");
+    console.log("Milestones: repo-specific (no default milestones created).");
     if (!dryRun) {
-      const markerPath = await writeTrackerBootstrapMarker(repo);
+      const markerPath = await writeTrackerBootstrapMarker(
+        repo,
+        { milestones: Array.from(existingMilestones), labels: Array.from(existingLabels) },
+      );
       console.log(`tracker bootstrap: marker updated at ${markerPath}`);
     }
     return;
   }
-
-  if (milestonesToCreate.length > 0) {
-    console.log("\nMilestones to create:");
-    for (const milestone of milestonesToCreate) {
-      console.log(`- ${milestone.title}`);
-      const args = [
-        "api",
-        "--method",
-        "POST",
-        `repos/${repo}/milestones`,
-        "-f",
-        `title=${milestone.title}`,
-        "-f",
-        `description=${milestone.description}`,
-      ];
-      printGhCommand(args);
-      if (!dryRun) {
-        await runGhWithRetry(execaFn, args, { stdio: "inherit" });
-      }
-    }
-  } else {
-    console.log("Milestones: already configured.");
-  }
+  console.log("Milestones: repo-specific (no default milestones created).");
 
   if (labelsToCreate.length > 0) {
     console.log("\nLabels to create:");
@@ -933,7 +954,13 @@ async function runTrackerBootstrap(execaFn: ExecaFn, dryRun: boolean): Promise<v
     return;
   }
 
-  const markerPath = await writeTrackerBootstrapMarker(repo);
+  const markerPath = await writeTrackerBootstrapMarker(
+    repo,
+    {
+      milestones: Array.from(existingMilestones),
+      labels: [...Array.from(existingLabels), ...labelsToCreate.map((label) => label.name)],
+    },
+  );
   console.log(`\ntracker bootstrap: DONE (${markerPath})`);
 }
 
@@ -1242,7 +1269,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
 
   tracker
     .command("bootstrap")
-    .description("Create default milestones + module labels in current GitHub repo")
+    .description("Create default module labels and tracker marker in current GitHub repo")
     .option("--dry-run", "Print gh commands without executing them", false)
     .action(async (opts) => {
       const dryRun = Boolean(opts.dryRun);
@@ -1885,6 +1912,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       if (ghIssueQueryOk) {
         printIssueBlock("In-progress issues", findInProgressIssues(snapshots), 10);
         printHygieneWarnings(snapshots);
+        await printPreflightMilestoneSuggestions(execaFn, snapshots);
       }
 
       await printPreflightSecuritySummary(execaFn);

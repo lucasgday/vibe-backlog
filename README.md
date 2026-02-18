@@ -117,7 +117,7 @@ vibe postflight --apply
 # vibe postflight --apply --skip-branch-cleanup
 ```
 
-`preflight` now prints a security snapshot (policy, gitleaks availability, last scan) and a hint when `.vibe` exists but tracker bootstrap marker is missing.
+`preflight` now prints a security snapshot (policy, gitleaks availability, last scan), a hint when `.vibe` exists but tracker bootstrap marker is missing, and read-only semantic milestone suggestions for issues without milestone.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
@@ -127,7 +127,7 @@ vibe postflight --apply
 `review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain.
 `pr open` creates/reuses an open PR for the issue, injects deterministic architecture/rationale sections plus `Fixes #<issue>`, and enforces a review gate by HEAD marker (unless explicitly skipped).
 `pr ready` validates final merge-readiness (`OPEN`, non-draft, `mergeStateStatus=CLEAN`, remote head sync, review marker) and prints non-destructive remediation for stale/desync states.
-`tracker reconcile` fills missing `module:*` labels and milestone metadata using repo-specific taxonomy/history, with interactive or flag-based fallbacks.
+`tracker reconcile` fills missing `module:*` labels and milestone metadata using semantic signals (title/body/module history); when no existing milestone matches strongly, it can plan/create a repo-specific delivery milestone.
 
 ## Agent workflow (AGENTS.md)
 
@@ -245,7 +245,8 @@ Options:
 Behavior:
 
 - Default mode applies updates (`gh issue edit`) to open issues with missing `module:*` or milestone.
-- In non-interactive sessions, unresolved decisions degrade to plan-only and exit `0`.
+- If milestone affinity is low, reconcile generates a delivery-goal milestone title (`<Area>: <Objective>`) and creates it before issue assignment.
+- `preflight` remains read-only; milestone creation happens only in write flows (e.g. reconcile/apply flows).
 - Reconcile never removes/replaces existing module labels or milestone; it only fills missing metadata.
 
 ## `vibe review` command reference
