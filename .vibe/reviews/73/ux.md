@@ -1,0 +1,25 @@
+# UX Pass
+
+## Review Focus
+- Flow touched:
+- Accessibility/performance checks:
+
+## Checklist
+- [ ] Empty and error states reviewed
+- [ ] Copy and affordances reviewed
+- [ ] Interaction quality reviewed
+
+## Notes
+- 
+
+## Run 2026-02-19T14:36:52.818Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Assumption: CLI/text-only surface (monospace, 16px-equivalent body, line-by-line scan). Information architecture is mostly consistent, but the severity/counter mismatch creates a hierarchy/comprehension issue in the summary block.
+
+### Findings
+- none
