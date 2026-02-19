@@ -131,3 +131,15 @@ Regression coverage now exercises absolute-path normalization and canonical/fing
 
 ### Findings
 - none
+
+## Run 2026-02-19T19:14:20.977Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner-6
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Regression coverage includes absolute-path normalization and canonical/fingerprint merge scenarios; no additional quality gaps identified.
+
+### Findings
+- none
