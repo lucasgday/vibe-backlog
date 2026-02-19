@@ -684,8 +684,8 @@ export async function runReviewCommand(
   const unresolvedFindings = dedupeFindingsByFingerprint(flattenReviewFindings(finalOutput));
   const allFindings = Array.from(allFindingsByFingerprint.values());
   const resolvedFindings = computeResolvedFindings(allFindings, unresolvedFindings);
-  let severityTotals = summarizeSeverity(unresolvedFindings);
-  let findingTotals: ReviewFindingTotals = {
+  const currentRunSeverityTotals = summarizeSeverity(unresolvedFindings);
+  const currentRunFindingTotals: ReviewFindingTotals = {
     observed: allFindings.length,
     unresolved: unresolvedFindings.length,
     resolved: resolvedFindings.length,
@@ -693,37 +693,11 @@ export async function runReviewCommand(
     warning: null,
   };
 
-  if (!options.dryRun && pr.number > 0) {
-    try {
-      const lifecycleTotals = await summarizeReviewThreadLifecycleTotals(
-        {
-          prNumber: pr.number,
-          vibeManagedOnly: true,
-        },
-        execaFn,
-      );
-
-      const observed = Math.max(allFindings.length, lifecycleTotals.observed);
-      const unresolved = Math.max(unresolvedFindings.length, lifecycleTotals.unresolved);
-      const resolved = Math.max(resolvedFindings.length, lifecycleTotals.resolved, Math.max(0, observed - unresolved));
-      findingTotals = {
-        observed,
-        unresolved,
-        resolved,
-        source: "lifecycle",
-        warning: null,
-      };
-      if (lifecycleTotals.unresolved >= unresolvedFindings.length) {
-        severityTotals = { ...lifecycleTotals.unresolvedSeverity };
-      }
-    } catch (error) {
-      findingTotals.warning = `lifecycle unavailable (${formatErrorMessage(error)}); using current-run totals`;
-    }
-  }
-
   let followUp: FollowUpIssue | null = null;
   let closedFollowUpIssueNumbers: number[] = [];
   let followUpCloseWarnings: string[] = [];
+  let threadResolution: ReviewThreadsResolveResult | null = null;
+  let threadResolutionWarning: string | null = null;
 
   const previewSummary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
@@ -744,8 +718,8 @@ export async function runReviewCommand(
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
-    findingTotals,
-    severityTotals,
+    findingTotals: currentRunFindingTotals,
+    severityTotals: currentRunSeverityTotals,
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
@@ -768,6 +742,63 @@ export async function runReviewCommand(
     });
     closedFollowUpIssueNumbers = closeResult.closedIssueNumbers;
     followUpCloseWarnings = closeResult.warnings;
+  }
+
+  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    try {
+      threadResolution = await resolveReviewThreads(
+        {
+          prNumber: pr.number,
+          threadIds: [],
+          allUnresolved: true,
+          bodyOverride: null,
+          dryRun: false,
+          vibeManagedOnly: true,
+        },
+        execaFn,
+      );
+
+      if (threadResolution.failed > 0) {
+        threadResolutionWarning = `review: thread auto-resolve warning selected=${threadResolution.selectedThreads} resolved=${threadResolution.resolved} failed=${threadResolution.failed}.`;
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : String(error);
+      threadResolutionWarning = `review: thread auto-resolve warning ${message}`;
+    }
+  }
+
+  let severityTotals = currentRunSeverityTotals;
+  let findingTotals = currentRunFindingTotals;
+  if (!options.dryRun && pr.number > 0) {
+    try {
+      const lifecycleTotals = await summarizeReviewThreadLifecycleTotals(
+        {
+          prNumber: pr.number,
+          vibeManagedOnly: true,
+        },
+        execaFn,
+      );
+
+      const observed = Math.max(currentRunFindingTotals.observed, lifecycleTotals.observed);
+      const unresolved = Math.max(currentRunFindingTotals.unresolved, lifecycleTotals.unresolved);
+      const resolved = Math.max(currentRunFindingTotals.resolved, lifecycleTotals.resolved, Math.max(0, observed - unresolved));
+      findingTotals = {
+        observed,
+        unresolved,
+        resolved,
+        source: "lifecycle",
+        warning: null,
+      };
+      if (lifecycleTotals.unresolved >= unresolvedFindings.length) {
+        severityTotals = { ...lifecycleTotals.unresolvedSeverity };
+      }
+    } catch (error) {
+      findingTotals = {
+        ...currentRunFindingTotals,
+        warning: `lifecycle unavailable (${formatErrorMessage(error)}); using current-run totals`,
+      };
+      severityTotals = currentRunSeverityTotals;
+    }
   }
 
   const summary = buildOutcomeSummaryMarkdown({
@@ -826,31 +857,6 @@ export async function runReviewCommand(
       findings: unresolvedFindings,
       dryRun: options.dryRun,
     });
-  }
-
-  let threadResolution: ReviewThreadsResolveResult | null = null;
-  let threadResolutionWarning: string | null = null;
-  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
-    try {
-      threadResolution = await resolveReviewThreads(
-        {
-          prNumber: pr.number,
-          threadIds: [],
-          allUnresolved: true,
-          bodyOverride: null,
-          dryRun: false,
-          vibeManagedOnly: true,
-        },
-        execaFn,
-      );
-
-      if (threadResolution.failed > 0) {
-        threadResolutionWarning = `review: thread auto-resolve warning selected=${threadResolution.selectedThreads} resolved=${threadResolution.resolved} failed=${threadResolution.failed}.`;
-      }
-    } catch (error) {
-      const message = error instanceof Error && error.message ? error.message : String(error);
-      threadResolutionWarning = `review: thread auto-resolve warning ${message}`;
-    }
   }
 
   const exitCode = unresolvedFindings.length > 0 && options.strict ? REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE : 0;
