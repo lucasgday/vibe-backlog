@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveReviewThreads } from "../src/core/review-threads";
+import { resolveReviewThreads, summarizeReviewThreadLifecycleTotals } from "../src/core/review-threads";
 
 function buildThreadPayload(params: {
   id: string;
@@ -70,6 +70,53 @@ function buildThreadsGraphqlResponse(threads: Array<Record<string, unknown>>): s
 }
 
 describe("review threads resolve core", () => {
+  it("summarizes lifecycle totals by fingerprint with unresolved precedence", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_unresolved",
+                isResolved: false,
+                body:
+                  "**[P2] Validate input paths**\n\nPath sanitization is required.\n\nPass: `security`\n\n<!-- vibe:fingerprint:abc123def456 -->",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_same_fingerprint",
+                isResolved: true,
+                body:
+                  "**[P2] Validate input paths**\n\nPath sanitization is required.\n\nPass: `security`\n\n<!-- vibe:fingerprint:abc123def456 -->",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_unique",
+                isResolved: true,
+                body:
+                  "**[P2] Add retry guard**\n\nTimeouts need retry.\n\nPass: `ops`\n\n<!-- vibe:fingerprint:def456abc123 -->",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const totals = await summarizeReviewThreadLifecycleTotals(
+      {
+        prNumber: 51,
+      },
+      execaMock as never,
+    );
+
+    expect(totals).toEqual({
+      observed: 2,
+      unresolved: 1,
+      resolved: 1,
+    });
+  });
+
   it("plans dry-run for all unresolved threads without mutations", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/dedupe\n" };

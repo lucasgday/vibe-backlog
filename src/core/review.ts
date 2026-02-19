@@ -23,7 +23,11 @@ import {
   type FollowUpIssue,
 } from "./review-pr";
 import { appendReviewSummaryToPostflight } from "./review-postflight";
-import { resolveReviewThreads, type ReviewThreadsResolveResult } from "./review-threads";
+import {
+  resolveReviewThreads,
+  summarizeReviewThreadLifecycleTotals,
+  type ReviewThreadsResolveResult,
+} from "./review-threads";
 import { ensureIssueReviewTemplates, getIssueReviewDirectory } from "./reviews";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
@@ -89,6 +93,14 @@ type ReviewRunContext = {
 type ReviewBranchPrSnapshot = {
   body: string | null;
   baseRefName: string | null;
+};
+
+type ReviewFindingTotals = {
+  observed: number;
+  unresolved: number;
+  resolved: number;
+  source: "current-run" | "lifecycle";
+  warning: string | null;
 };
 
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
@@ -358,6 +370,13 @@ function formatTermination(terminationReason: ReviewTerminationReason): string {
   return `early-stop (reason=${terminationReason})`;
 }
 
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return String(error);
+}
+
 function buildOutcomeSummaryMarkdown(params: {
   issueId: number;
   issueTitle: string;
@@ -377,6 +396,7 @@ function buildOutcomeSummaryMarkdown(params: {
   resumeFallback: boolean;
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
   terminationReason: ReviewTerminationReason;
+  findingTotals: ReviewFindingTotals;
 }): string {
   const passStats = buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
   const severity = summarizeSeverity(params.unresolvedFindings);
@@ -389,11 +409,17 @@ function buildOutcomeSummaryMarkdown(params: {
     `- Run ID: ${params.output.run_id}`,
     `- Attempts: ${params.attemptsUsed}/${params.maxAttempts}`,
     `- Termination: ${formatTermination(params.terminationReason)}`,
-    `- Findings observed: ${params.allFindings.length}`,
-    `- Unresolved findings: ${params.unresolvedFindings.length}`,
-    `- Resolved findings: ${params.resolvedFindings.length}`,
+    `- Findings observed: ${params.findingTotals.observed}`,
+    `- Unresolved findings: ${params.findingTotals.unresolved}`,
+    `- Resolved findings: ${params.findingTotals.resolved}`,
     `- Severity: P0=${severity.P0}, P1=${severity.P1}, P2=${severity.P2}, P3=${severity.P3}`,
   ];
+  if (params.findingTotals.source === "lifecycle") {
+    lines.push("- Findings totals scope: lifecycle (PR threads + current run)");
+  }
+  if (params.findingTotals.warning) {
+    lines.push(`- Findings totals warning: ${params.findingTotals.warning}`);
+  }
   if (params.providerHealedFromRuntime) {
     lines.push(`- Provider auto-heal: ${params.providerHealedFromRuntime} -> ${params.provider}`);
   }
@@ -656,6 +682,39 @@ export async function runReviewCommand(
   const unresolvedFindings = dedupeFindingsByFingerprint(flattenReviewFindings(finalOutput));
   const allFindings = Array.from(allFindingsByFingerprint.values());
   const resolvedFindings = computeResolvedFindings(allFindings, unresolvedFindings);
+  let findingTotals: ReviewFindingTotals = {
+    observed: allFindings.length,
+    unresolved: unresolvedFindings.length,
+    resolved: resolvedFindings.length,
+    source: "current-run",
+    warning: null,
+  };
+
+  if (!options.dryRun && pr.number > 0) {
+    try {
+      const lifecycleTotals = await summarizeReviewThreadLifecycleTotals(
+        {
+          prNumber: pr.number,
+          vibeManagedOnly: true,
+        },
+        execaFn,
+      );
+
+      const observed = Math.max(allFindings.length, lifecycleTotals.observed);
+      const unresolved = Math.max(unresolvedFindings.length, lifecycleTotals.unresolved);
+      const resolved = Math.max(resolvedFindings.length, lifecycleTotals.resolved, Math.max(0, observed - unresolved));
+      findingTotals = {
+        observed,
+        unresolved,
+        resolved,
+        source: "lifecycle",
+        warning: null,
+      };
+    } catch (error) {
+      findingTotals.warning = `lifecycle unavailable (${formatErrorMessage(error)}); using current-run totals`;
+    }
+  }
+
   let followUp: FollowUpIssue | null = null;
   let closedFollowUpIssueNumbers: number[] = [];
   let followUpCloseWarnings: string[] = [];
@@ -679,6 +738,7 @@ export async function runReviewCommand(
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
+    findingTotals,
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
@@ -722,6 +782,7 @@ export async function runReviewCommand(
     resumeFallback,
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
+    findingTotals,
   });
 
   if (!options.dryRun) {

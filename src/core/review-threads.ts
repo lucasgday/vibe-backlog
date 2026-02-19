@@ -91,6 +91,17 @@ export type ReviewThreadsResolveResult = {
   items: ReviewThreadResolveItem[];
 };
 
+export type ReviewThreadLifecycleTotals = {
+  observed: number;
+  unresolved: number;
+  resolved: number;
+};
+
+export type ReviewThreadLifecycleTotalsOptions = {
+  prNumber: number;
+  vibeManagedOnly?: boolean;
+};
+
 type ReviewThreadComment = {
   id: string;
   body: string | null;
@@ -509,6 +520,54 @@ function selectThreads(
 function missingThreadIds(allThreads: ReviewThread[], requested: string[]): string[] {
   const existing = new Set(allThreads.map((thread) => thread.id));
   return requested.filter((id) => !existing.has(id));
+}
+
+function buildLifecycleFindingKey(thread: ReviewThread): string | null {
+  const firstComment = thread.comments[0];
+  if (!firstComment) return null;
+  const fingerprint = extractFingerprint(firstComment.body);
+  if (fingerprint) return `fingerprint:${fingerprint}`;
+  return `thread:${thread.id}`;
+}
+
+export async function summarizeReviewThreadLifecycleTotals(
+  options: ReviewThreadLifecycleTotalsOptions,
+  execaFn: ExecaFn = execa,
+): Promise<ReviewThreadLifecycleTotals> {
+  const repoSlug = await resolveRepoNameWithOwner(execaFn);
+  const { owner, repo } = splitOwnerRepo(repoSlug);
+  const allThreads = await listPullRequestReviewThreads(execaFn, owner, repo, options.prNumber);
+  const vibeManagedOnly = options.vibeManagedOnly !== false;
+  const selectedThreads = vibeManagedOnly ? allThreads.filter((thread) => isVibeManagedThread(thread)) : allThreads;
+
+  const statusByFindingKey = new Map<string, { unresolved: boolean; resolved: boolean }>();
+  for (const thread of selectedThreads) {
+    const findingKey = buildLifecycleFindingKey(thread);
+    if (!findingKey) continue;
+    const current = statusByFindingKey.get(findingKey) ?? { unresolved: false, resolved: false };
+    if (thread.isResolved) {
+      current.resolved = true;
+    } else {
+      current.unresolved = true;
+    }
+    statusByFindingKey.set(findingKey, current);
+  }
+
+  let unresolved = 0;
+  let resolved = 0;
+  for (const status of statusByFindingKey.values()) {
+    if (status.unresolved) {
+      unresolved += 1;
+    } else if (status.resolved) {
+      resolved += 1;
+    }
+  }
+
+  return {
+    observed: statusByFindingKey.size,
+    unresolved,
+    resolved,
+  };
 }
 
 export async function resolveReviewThreads(
