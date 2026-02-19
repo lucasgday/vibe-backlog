@@ -23,3 +23,15 @@
 
 ### Findings
 - [P2] Missing test for auto-resolve failure path in review command (tests/cli-review.test.ts:274)
+
+## Run 2026-02-19T01:34:00.656Z
+- run_id: issue-63-attempt-1-2026-02-19b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Quality coverage for the new behaviors is present, including partial auto-resolve failure and mixed-thread filtering scenarios.
+
+### Findings
+- none
