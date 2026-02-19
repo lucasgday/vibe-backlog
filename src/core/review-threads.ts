@@ -541,19 +541,32 @@ function missingThreadIds(allThreads: ReviewThread[], requested: string[]): stri
   return requested.filter((id) => !existing.has(id));
 }
 
-function buildLifecycleFindingKey(thread: ReviewThread): string | null {
-  const firstComment = thread.comments[0];
-  if (!firstComment) return null;
-  const fingerprint = extractFingerprint(firstComment.body);
-  if (fingerprint) return `fingerprint:${fingerprint}`;
-  const severityTitle = extractSeverityAndTitle(firstComment.body);
+function buildLifecycleFindingIdentity(thread: ReviewThread): {
+  candidateKeys: string[];
+  canonicalKey: string | null;
+  fingerprintKey: string | null;
+  fallbackKey: string;
+  severity: "P0" | "P1" | "P2" | "P3" | null;
+} {
+  const firstComment = thread.comments[0] ?? null;
+  const severityTitle = extractSeverityAndTitle(firstComment?.body ?? null);
+  const severity = normalizeSeverity(severityTitle.severity);
+  const fingerprint = extractFingerprint(firstComment?.body ?? null);
+  const fingerprintKey = fingerprint ? `fingerprint:${fingerprint}` : null;
   const canonicalKey = buildCanonicalFindingKey(
-    firstComment.path,
-    firstComment.line ?? firstComment.originalLine,
+    firstComment?.path ?? null,
+    firstComment?.line ?? firstComment?.originalLine ?? null,
     severityTitle.title,
   );
-  if (canonicalKey) return canonicalKey;
-  return `thread:${thread.id}`;
+  const fallbackKey = `thread:${thread.id}`;
+  const candidateKeys = [fingerprintKey, canonicalKey, fallbackKey].filter((key): key is string => Boolean(key));
+  return {
+    candidateKeys,
+    canonicalKey,
+    fingerprintKey,
+    fallbackKey,
+    severity,
+  };
 }
 
 function normalizeSeverity(value: string | null): "P0" | "P1" | "P2" | "P3" | null {
@@ -562,6 +575,24 @@ function normalizeSeverity(value: string | null): "P0" | "P1" | "P2" | "P3" | nu
     return normalized;
   }
   return null;
+}
+
+function pickHigherSeverity(
+  left: "P0" | "P1" | "P2" | "P3" | null,
+  right: "P0" | "P1" | "P2" | "P3" | null,
+): "P0" | "P1" | "P2" | "P3" | null {
+  if (!left) return right;
+  if (!right) return left;
+  const rank: Record<"P0" | "P1" | "P2" | "P3", number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+  return rank[left] <= rank[right] ? left : right;
+}
+
+function chooseLifecycleRepresentativeKey(params: {
+  canonicalKey: string | null;
+  fingerprintKey: string | null;
+  fallbackKey: string;
+}): string {
+  return params.canonicalKey ?? params.fingerprintKey ?? params.fallbackKey;
 }
 
 export async function summarizeReviewThreadLifecycleTotals(
@@ -574,22 +605,89 @@ export async function summarizeReviewThreadLifecycleTotals(
   const vibeManagedOnly = options.vibeManagedOnly !== false;
   const selectedThreads = vibeManagedOnly ? allThreads.filter((thread) => isVibeManagedThread(thread)) : allThreads;
 
-  const statusByFindingKey = new Map<string, { unresolved: boolean; resolved: boolean; severity: "P0" | "P1" | "P2" | "P3" | null }>();
+  const statusByFindingId = new Map<
+    string,
+    {
+      aliases: Set<string>;
+      unresolved: boolean;
+      resolved: boolean;
+      severity: "P0" | "P1" | "P2" | "P3" | null;
+      canonicalKey: string | null;
+      fingerprintKey: string | null;
+      fallbackKey: string;
+    }
+  >();
+  const findingIdByAlias = new Map<string, string>();
+  let findingIdCounter = 0;
   for (const thread of selectedThreads) {
-    const findingKey = buildLifecycleFindingKey(thread);
-    if (!findingKey) continue;
-    const detailComment = thread.comments[0] ?? null;
-    const severity = normalizeSeverity(extractSeverityAndTitle(detailComment?.body ?? null).severity);
-    const current = statusByFindingKey.get(findingKey) ?? { unresolved: false, resolved: false, severity: null };
+    const identity = buildLifecycleFindingIdentity(thread);
+    const matchedFindingIds = Array.from(
+      new Set(
+        identity.candidateKeys
+          .map((key) => findingIdByAlias.get(key))
+          .filter((findingId): findingId is string => Boolean(findingId)),
+      ),
+    );
+
+    let primaryFindingId = matchedFindingIds[0];
+    if (!primaryFindingId) {
+      primaryFindingId = `finding-${findingIdCounter}`;
+      findingIdCounter += 1;
+      statusByFindingId.set(primaryFindingId, {
+        aliases: new Set(),
+        unresolved: false,
+        resolved: false,
+        severity: null,
+        canonicalKey: null,
+        fingerprintKey: null,
+        fallbackKey: identity.fallbackKey,
+      });
+    }
+
+    const current =
+      statusByFindingId.get(primaryFindingId) ?? {
+        aliases: new Set<string>(),
+        unresolved: false,
+        resolved: false,
+        severity: null,
+        canonicalKey: null,
+        fingerprintKey: null,
+        fallbackKey: identity.fallbackKey,
+      };
+
+    for (const extraFindingId of matchedFindingIds.slice(1)) {
+      if (extraFindingId === primaryFindingId) continue;
+      const extra = statusByFindingId.get(extraFindingId);
+      if (!extra) continue;
+      current.unresolved = current.unresolved || extra.unresolved;
+      current.resolved = current.resolved || extra.resolved;
+      current.severity = pickHigherSeverity(current.severity, extra.severity);
+      current.canonicalKey = current.canonicalKey ?? extra.canonicalKey;
+      current.fingerprintKey = current.fingerprintKey ?? extra.fingerprintKey;
+      current.fallbackKey = current.fallbackKey || extra.fallbackKey;
+      for (const alias of extra.aliases) {
+        current.aliases.add(alias);
+        findingIdByAlias.set(alias, primaryFindingId);
+      }
+      statusByFindingId.delete(extraFindingId);
+    }
+
     if (thread.isResolved) {
       current.resolved = true;
     } else {
       current.unresolved = true;
-      if (severity) {
-        current.severity = severity;
-      }
+      current.severity = pickHigherSeverity(current.severity, identity.severity);
     }
-    statusByFindingKey.set(findingKey, current);
+
+    current.canonicalKey = current.canonicalKey ?? identity.canonicalKey;
+    current.fingerprintKey = current.fingerprintKey ?? identity.fingerprintKey;
+    current.fallbackKey = current.fallbackKey || identity.fallbackKey;
+    for (const alias of identity.candidateKeys) {
+      current.aliases.add(alias);
+      findingIdByAlias.set(alias, primaryFindingId);
+    }
+
+    statusByFindingId.set(primaryFindingId, current);
   }
 
   let unresolved = 0;
@@ -598,7 +696,12 @@ export async function summarizeReviewThreadLifecycleTotals(
   const unresolvedSeverityByFindingKey: Record<string, "P0" | "P1" | "P2" | "P3"> = {};
   const unresolvedFindingKeys: string[] = [];
   const resolvedFindingKeys: string[] = [];
-  for (const [findingKey, status] of statusByFindingKey.entries()) {
+  for (const status of statusByFindingId.values()) {
+    const findingKey = chooseLifecycleRepresentativeKey({
+      canonicalKey: status.canonicalKey,
+      fingerprintKey: status.fingerprintKey,
+      fallbackKey: status.fallbackKey,
+    });
     if (status.unresolved) {
       unresolved += 1;
       unresolvedFindingKeys.push(findingKey);
@@ -613,7 +716,7 @@ export async function summarizeReviewThreadLifecycleTotals(
   }
 
   return {
-    observed: statusByFindingKey.size,
+    observed: statusByFindingId.size,
     unresolved,
     resolved,
     unresolvedSeverity,

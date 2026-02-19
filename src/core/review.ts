@@ -340,7 +340,8 @@ function computeResolvedFindings(allFindings: ReviewFinding[], unresolvedFinding
 }
 
 function toFindingKey(finding: ReviewFinding): string {
-  return `fingerprint:${computeFindingFingerprint(finding)}`;
+  const normalizedFile = normalizeLifecycleMergePath(finding.file ?? null);
+  return `fingerprint:${computeFindingFingerprint({ ...finding, file: normalizedFile })}`;
 }
 
 function normalizeCanonicalKeyPart(value: string | null | undefined): string {
@@ -348,8 +349,34 @@ function normalizeCanonicalKeyPart(value: string | null | undefined): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function normalizeLifecycleMergePath(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const normalizeMacPrivatePrefix = (input: string): string => {
+    return input.startsWith("/private/") ? input.slice("/private".length) : input;
+  };
+
+  if (path.isAbsolute(trimmed)) {
+    const absolutePath = path.resolve(trimmed);
+    const cwdPath = process.cwd();
+    const relative = path.relative(cwdPath, absolutePath);
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return relative.split(path.sep).join("/");
+    }
+
+    const macRelative = path.relative(normalizeMacPrivatePrefix(cwdPath), normalizeMacPrivatePrefix(absolutePath));
+    if (macRelative && !macRelative.startsWith("..") && !path.isAbsolute(macRelative)) {
+      return macRelative.split(path.sep).join("/");
+    }
+  }
+  const normalized = trimmed.replace(/\\/g, "/").replace(/^\.\//, "");
+  return normalized || null;
+}
+
 function toCanonicalFindingKey(finding: ReviewFinding): string | null {
-  const normalizedFile = normalizeCanonicalKeyPart(finding.file ?? null);
+  const normalizedFile = normalizeCanonicalKeyPart(normalizeLifecycleMergePath(finding.file ?? null));
   const normalizedTitle = normalizeCanonicalKeyPart(finding.title);
   const normalizedLine = typeof finding.line === "number" && finding.line > 0 ? String(finding.line) : "";
   if (!normalizedFile && !normalizedLine && !normalizedTitle) {

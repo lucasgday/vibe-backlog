@@ -705,7 +705,7 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
   });
 
-  it("dedupes connector-managed lifecycle threads without fingerprint against current-run findings", async () => {
+  it("dedupes connector-managed lifecycle threads when current-run finding uses absolute file path", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
       issue_id: 34,
@@ -727,7 +727,26 @@ describe.sequential("cli review", () => {
       if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
       if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
         return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
-      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-lifecycle-connector-dedupe", findingsCount: 1, autofixApplied: false }) };
+      if (cmd === "zsh") {
+        return {
+          stdout: buildAgentOutput({
+            runId: "run-lifecycle-connector-dedupe",
+            findingsCount: 1,
+            autofixApplied: false,
+            findings: [
+              {
+                id: "f-absolute-path",
+                pass: "security",
+                severity: "P2",
+                title: "Validate user input",
+                body: "Input path needs validation.",
+                file: path.join(tempDir, "src", "cli-program.ts"),
+                line: 42,
+              },
+            ],
+          }),
+        };
+      }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
         return { stdout: "[]" };
       }
@@ -790,10 +809,11 @@ describe.sequential("cli review", () => {
     await program.parseAsync(["node", "vibe", "review", "--no-autopush"]);
 
     expect(process.exitCode).toBeUndefined();
-    expect(logs.some((line) => line.includes("Findings observed: 1"))).toBe(true);
-    expect(logs.some((line) => line.includes("Unresolved findings: 1"))).toBe(true);
-    expect(logs.some((line) => line.includes("Resolved findings: 0"))).toBe(true);
-    expect(logs.some((line) => line.includes("review: findings_totals_source=lifecycle"))).toBe(true);
+    const summaryText = logs.join("\n");
+    expect(summaryText).toContain("Findings observed: 1");
+    expect(summaryText).toContain("Unresolved findings: 1");
+    expect(summaryText).toContain("Resolved findings: 0");
+    expect(summaryText).toContain("review: findings_totals_source=lifecycle");
   });
 
   it("does not collapse distinct current findings when canonical lifecycle key is ambiguous", async () => {
