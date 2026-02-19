@@ -23,3 +23,15 @@ This change improves trust/readability of auto-generated issues, which supports 
 
 ### Findings
 - none
+
+## Run 2026-02-19T19:36:32.848Z
+- run_id: issue-75-pr-76-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The change improves issue readability and workflow trust, but there is no measurement of policy adherence over time.
+
+### Findings
+- [P3] Missing instrumentation for issue-creation policy adherence (src/core/gh-issue.ts:17)

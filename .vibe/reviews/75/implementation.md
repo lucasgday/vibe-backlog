@@ -26,3 +26,15 @@ The implementation is scoped to policy enforcement and extracts issue creation i
 
 ### Findings
 - none
+
+## Run 2026-02-19T19:36:32.845Z
+- run_id: issue-75-pr-76-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Centralization is correctly applied: follow-up issue creation now delegates to a single helper and behavior remains equivalent to the previous flow.
+
+### Findings
+- none
