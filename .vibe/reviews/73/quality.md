@@ -95,3 +95,15 @@ Coverage is strong, but one assertion gap leaves the severity drift defect ungua
 
 ### Findings
 - [P3] Ambiguous-canonical regression test does not assert severity consistency (tests/cli-review.test.ts:912)
+
+## Run 2026-02-19T15:16:01.201Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner-4
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Reviewed regression coverage additions for lifecycle totals, canonical fallback, ambiguity handling, and warning telemetry; no quality gaps found in the current diff.
+
+### Findings
+- none
