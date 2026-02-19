@@ -103,4 +103,73 @@ describe("review agent schema", () => {
     expect(result.output.run_id).toBe("run-noisy");
     expect(result.runner).toBe("command");
   });
+
+  it("includes expected review artifact guidance in provider prompt", async () => {
+    let capturedPrompt = "";
+    const validOutput = {
+      version: 1,
+      run_id: "run-provider",
+      passes: [
+        { name: "implementation", summary: "ok", findings: [] },
+        { name: "security", summary: "ok", findings: [] },
+        { name: "quality", summary: "ok", findings: [] },
+        { name: "ux", summary: "ok", findings: [] },
+        { name: "growth", summary: "ok", findings: [] },
+        { name: "ops", summary: "ok", findings: [] },
+      ],
+      autofix: {
+        applied: false,
+        changed_files: [],
+      },
+    };
+
+    const execaMock = async (_cmd: string, args: string[], options?: Record<string, unknown>) => {
+      if (args[0] === "exec" && args[1] === "--skip-git-repo-check") {
+        capturedPrompt = String(options?.input ?? "");
+        return {
+          stdout: JSON.stringify(validOutput),
+        };
+      }
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    };
+
+    const result = await runReviewAgent({
+      execaFn: execaMock as never,
+      plan: {
+        mode: "provider",
+        provider: "codex",
+        source: "runtime",
+        providerBinary: "codex",
+        providerCommandOverride: null,
+        runtimePath: "/tmp/review-provider.json",
+        autoMode: true,
+        resumeThreadId: null,
+        healedFromRuntime: null,
+      },
+      input: {
+        version: 1,
+        workspace_root: "/tmp/repo",
+        repo: "acme/demo",
+        issue: {
+          id: 34,
+          title: "review command",
+          url: null,
+        },
+        branch: "codex/issue-34-vibe-review",
+        base_branch: "main",
+        pr: {
+          number: 99,
+          url: null,
+        },
+        attempt: 1,
+        max_attempts: 5,
+        autofix: true,
+        passes: REVIEW_PASS_ORDER,
+      },
+    });
+
+    expect(result.output.run_id).toBe("run-provider");
+    expect(capturedPrompt).toContain(".vibe/reviews/<issue>/*.md");
+    expect(capturedPrompt).toContain(".vibe/artifacts/postflight.json");
+  });
 });

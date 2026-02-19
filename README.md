@@ -124,7 +124,7 @@ vibe postflight --apply
 `postflight --apply` now runs automatic local branch cleanup for `upstream gone` branches (safe delete for merged, force delete for patch-equivalent, non-merged require explicit manual confirmation). Use `--skip-branch-cleanup` to bypass it.
 `branch cleanup` provides explicit cleanup control, including dry-run planning and guarded force path for non-merged branches.
 `security scan` runs gitleaks in `staged`, `working-tree`, or `history` mode with configurable `warn|fail` policy (`.vibe/contract.yml` by default).
-`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain. In non-dry-run mode, when unresolved findings reach `0`, it auto-closes open follow-up issues for that source marker; close failures are reported as warnings and do not fail the run.
+`review` runs the 5 role passes via external agent command, retries up to `--max-attempts`, publishes one final PR report, and can auto-create/update a single follow-up issue per source issue when unresolved findings remain. In non-dry-run mode, when unresolved findings reach `0`, it auto-closes open follow-up issues for that source marker; close failures are reported as warnings and do not fail the run. Summary counters (`Findings observed`, `Unresolved findings`, `Resolved findings`) use lifecycle totals from vibe-managed PR review threads plus current-run findings.
 `pr open` creates/reuses an open PR for the issue, injects deterministic architecture/rationale sections plus `Fixes #<issue>`, and enforces a review gate by HEAD marker (unless explicitly skipped).
 `pr ready` validates final merge-readiness (`OPEN`, non-draft, `mergeStateStatus=CLEAN`, remote head sync, review marker) and prints non-destructive remediation for stale/desync states.
 `tracker reconcile` fills missing `module:*` labels and milestone metadata using semantic signals (title/body/module history); when no existing milestone matches strongly, it can plan/create a repo-specific delivery milestone.
@@ -287,6 +287,7 @@ Follow-up issue behavior:
 - Unresolved findings after final attempt (`max-attempts`) create/update a single follow-up issue.
 - Non-dry-run with unresolved findings `0` attempts to auto-close open follow-up issues for the same source marker.
 - Auto-close failures are emitted in the review summary warnings and do not abort `vibe review`.
+- Review prompt treats `.vibe/reviews/<issue>/*.md` and `.vibe/artifacts/postflight.json` as expected generated artifacts (not unplanned changes by themselves).
 
 Provider resolution (highest priority first):
 

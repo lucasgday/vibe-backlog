@@ -121,6 +121,7 @@ function buildProviderPrompt(input: ReviewAgentInput): string {
     "- ux: if UI context is partial, state assumptions explicitly (for example: 8pt grid, 16px body type, 44px minimum targets).",
     "- growth: identify product growth opportunities (activation, retention, conversion, instrumentation, experiment gaps) grounded in evidence from the diff/context.",
     "- growth: each finding should include a concrete next action suitable for a follow-up issue.",
+    "- Treat `.vibe/reviews/<issue>/*.md` and `.vibe/artifacts/postflight.json` as expected review artifacts; do not flag them as unplanned/unexpected by themselves.",
     "- keep severities strictly in P0|P1|P2|P3.",
     "Return ONLY a JSON object (no markdown) matching this schema:",
     `{"version":1,"run_id":"string","passes":[{"name":"${passEnum}","summary":"string","findings":[{"id":"string","pass":"${passEnum}","severity":"P0|P1|P2|P3","title":"string","body":"string","file":"string|null","line":1,"kind":"defect|regression|security|improvement|docs|refactor|test|null"}]}],"autofix":{"applied":true,"summary":"string|null","changed_files":["string"]}}`,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveReviewThreads } from "../src/core/review-threads";
+import { resolveReviewThreads, summarizeReviewThreadLifecycleTotals } from "../src/core/review-threads";
 
 function buildThreadPayload(params: {
   id: string;
@@ -70,6 +70,182 @@ function buildThreadsGraphqlResponse(threads: Array<Record<string, unknown>>): s
 }
 
 describe("review threads resolve core", () => {
+  it("summarizes lifecycle totals by canonical identity with unresolved precedence", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_unresolved",
+                isResolved: false,
+                body:
+                  "**[P2] Validate input paths**\n\nPath sanitization is required.\n\nPass: `security`\n\n<!-- vibe:fingerprint:abc123def456 -->",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_same_fingerprint",
+                isResolved: true,
+                body:
+                  "**[P2] Validate input paths**\n\nPath sanitization is required.\n\nPass: `security`\n\n<!-- vibe:fingerprint:abc123def456 -->",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_unique",
+                isResolved: true,
+                body:
+                  "**[P2] Add retry guard**\n\nTimeouts need retry.\n\nPass: `ops`\n\n<!-- vibe:fingerprint:def456abc123 -->",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const totals = await summarizeReviewThreadLifecycleTotals(
+      {
+        prNumber: 51,
+      },
+      execaMock as never,
+    );
+
+    expect(totals).toEqual({
+      observed: 2,
+      unresolved: 1,
+      resolved: 1,
+      unresolvedSeverity: {
+        P0: 0,
+        P1: 0,
+        P2: 1,
+        P3: 0,
+      },
+      unresolvedSeverityByFindingKey: {
+        "canonical:src/cli-program.ts|42|validate input paths": "P2",
+      },
+      unresolvedFindingKeys: ["canonical:src/cli-program.ts|42|validate input paths"],
+      resolvedFindingKeys: ["canonical:src/cli-program.ts|42|add retry guard"],
+    });
+  });
+
+  it("uses canonical key fallback for connector-managed threads without fingerprint", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_connector_unresolved",
+                isResolved: false,
+                authorLogin: "chatgpt-codex-connector",
+                path: "src/core/review.ts",
+                line: 531,
+                body: "**[P1] Keep non-growth findings in follow-up issue payload**\n\nPass: `implementation`",
+              }),
+              buildThreadPayload({
+                id: "PRRT_connector_resolved_same_key",
+                isResolved: true,
+                authorLogin: "chatgpt-codex-connector",
+                path: "src/core/review.ts",
+                line: 531,
+                body: "**[P1] Keep non-growth findings in follow-up issue payload**\n\nPass: `implementation`",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_unique",
+                isResolved: true,
+                body:
+                  "**[P2] Add retry guard**\n\nTimeouts need retry.\n\nPass: `ops`\n\n<!-- vibe:fingerprint:def456abc123 -->",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const totals = await summarizeReviewThreadLifecycleTotals(
+      {
+        prNumber: 51,
+      },
+      execaMock as never,
+    );
+
+    expect(totals).toEqual({
+      observed: 2,
+      unresolved: 1,
+      resolved: 1,
+      unresolvedSeverity: {
+        P0: 0,
+        P1: 1,
+        P2: 0,
+        P3: 0,
+      },
+      unresolvedSeverityByFindingKey: {
+        "canonical:src/core/review.ts|531|keep non-growth findings in follow-up issue payload": "P1",
+      },
+      unresolvedFindingKeys: ["canonical:src/core/review.ts|531|keep non-growth findings in follow-up issue payload"],
+      resolvedFindingKeys: ["canonical:src/cli-program.ts|42|add retry guard"],
+    });
+  });
+
+  it("merges connector canonical and vibe fingerprint variants for the same finding", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_connector_unresolved",
+                isResolved: false,
+                authorLogin: "chatgpt-codex-connector",
+                path: "src/core/review.ts",
+                line: 777,
+                body: "**[P2] Normalize lifecycle merge keys**\n\nPass: `implementation`",
+              }),
+              buildThreadPayload({
+                id: "PRRT_vibe_resolved_same",
+                isResolved: true,
+                path: "src/core/review.ts",
+                line: 777,
+                body:
+                  "**[P2] Normalize lifecycle merge keys**\n\nPass: `implementation`\n\n<!-- vibe:fingerprint:feedface1234 -->",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const totals = await summarizeReviewThreadLifecycleTotals(
+      {
+        prNumber: 51,
+      },
+      execaMock as never,
+    );
+
+    expect(totals).toEqual({
+      observed: 1,
+      unresolved: 1,
+      resolved: 0,
+      unresolvedSeverity: {
+        P0: 0,
+        P1: 0,
+        P2: 1,
+        P3: 0,
+      },
+      unresolvedSeverityByFindingKey: {
+        "canonical:src/core/review.ts|777|normalize lifecycle merge keys": "P2",
+      },
+      unresolvedFindingKeys: ["canonical:src/core/review.ts|777|normalize lifecycle merge keys"],
+      resolvedFindingKeys: [],
+    });
+  });
+
   it("plans dry-run for all unresolved threads without mutations", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/dedupe\n" };

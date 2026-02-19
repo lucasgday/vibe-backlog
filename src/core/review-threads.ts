@@ -91,6 +91,21 @@ export type ReviewThreadsResolveResult = {
   items: ReviewThreadResolveItem[];
 };
 
+export type ReviewThreadLifecycleTotals = {
+  observed: number;
+  unresolved: number;
+  resolved: number;
+  unresolvedSeverity: Record<"P0" | "P1" | "P2" | "P3", number>;
+  unresolvedSeverityByFindingKey: Record<string, "P0" | "P1" | "P2" | "P3">;
+  unresolvedFindingKeys: string[];
+  resolvedFindingKeys: string[];
+};
+
+export type ReviewThreadLifecycleTotalsOptions = {
+  prNumber: number;
+  vibeManagedOnly?: boolean;
+};
+
 type ReviewThreadComment = {
   id: string;
   body: string | null;
@@ -304,6 +319,21 @@ function extractFingerprint(body: string | null): string | null {
   return match ? String(match[1]).trim().toLowerCase() : null;
 }
 
+function normalizeCanonicalKeyPart(value: string | null): string {
+  if (!value) return "";
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildCanonicalFindingKey(pathValue: string | null, line: number | null, title: string | null): string | null {
+  const normalizedPath = normalizeCanonicalKeyPart(pathValue);
+  const normalizedTitle = normalizeCanonicalKeyPart(title);
+  const normalizedLine = typeof line === "number" && line > 0 ? String(line) : "";
+  if (!normalizedPath && !normalizedLine && !normalizedTitle) {
+    return null;
+  }
+  return `canonical:${normalizedPath}|${normalizedLine}|${normalizedTitle}`;
+}
+
 function isManagedAutomationReply(body: string | null): boolean {
   if (!body) return false;
   return body.includes("Resolved via `vibe review threads resolve`.");
@@ -509,6 +539,191 @@ function selectThreads(
 function missingThreadIds(allThreads: ReviewThread[], requested: string[]): string[] {
   const existing = new Set(allThreads.map((thread) => thread.id));
   return requested.filter((id) => !existing.has(id));
+}
+
+function buildLifecycleFindingIdentity(thread: ReviewThread): {
+  candidateKeys: string[];
+  canonicalKey: string | null;
+  fingerprintKey: string | null;
+  fallbackKey: string;
+  severity: "P0" | "P1" | "P2" | "P3" | null;
+} {
+  const firstComment = thread.comments[0] ?? null;
+  const severityTitle = extractSeverityAndTitle(firstComment?.body ?? null);
+  const severity = normalizeSeverity(severityTitle.severity);
+  const fingerprint = extractFingerprint(firstComment?.body ?? null);
+  const fingerprintKey = fingerprint ? `fingerprint:${fingerprint}` : null;
+  const canonicalKey = buildCanonicalFindingKey(
+    firstComment?.path ?? null,
+    firstComment?.line ?? firstComment?.originalLine ?? null,
+    severityTitle.title,
+  );
+  const fallbackKey = `thread:${thread.id}`;
+  const candidateKeys = [fingerprintKey, canonicalKey, fallbackKey].filter((key): key is string => Boolean(key));
+  return {
+    candidateKeys,
+    canonicalKey,
+    fingerprintKey,
+    fallbackKey,
+    severity,
+  };
+}
+
+function normalizeSeverity(value: string | null): "P0" | "P1" | "P2" | "P3" | null {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (normalized === "P0" || normalized === "P1" || normalized === "P2" || normalized === "P3") {
+    return normalized;
+  }
+  return null;
+}
+
+function pickHigherSeverity(
+  left: "P0" | "P1" | "P2" | "P3" | null,
+  right: "P0" | "P1" | "P2" | "P3" | null,
+): "P0" | "P1" | "P2" | "P3" | null {
+  if (!left) return right;
+  if (!right) return left;
+  const rank: Record<"P0" | "P1" | "P2" | "P3", number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+  return rank[left] <= rank[right] ? left : right;
+}
+
+function chooseLifecycleRepresentativeKey(params: {
+  canonicalKey: string | null;
+  fingerprintKey: string | null;
+  fallbackKey: string;
+}): string {
+  return params.canonicalKey ?? params.fingerprintKey ?? params.fallbackKey;
+}
+
+export async function summarizeReviewThreadLifecycleTotals(
+  options: ReviewThreadLifecycleTotalsOptions,
+  execaFn: ExecaFn = execa,
+): Promise<ReviewThreadLifecycleTotals> {
+  const repoSlug = await resolveRepoNameWithOwner(execaFn);
+  const { owner, repo } = splitOwnerRepo(repoSlug);
+  const allThreads = await listPullRequestReviewThreads(execaFn, owner, repo, options.prNumber);
+  const vibeManagedOnly = options.vibeManagedOnly !== false;
+  const selectedThreads = vibeManagedOnly ? allThreads.filter((thread) => isVibeManagedThread(thread)) : allThreads;
+
+  const statusByFindingId = new Map<
+    string,
+    {
+      aliases: Set<string>;
+      unresolved: boolean;
+      resolved: boolean;
+      severity: "P0" | "P1" | "P2" | "P3" | null;
+      canonicalKey: string | null;
+      fingerprintKey: string | null;
+      fallbackKey: string;
+    }
+  >();
+  const findingIdByAlias = new Map<string, string>();
+  let findingIdCounter = 0;
+  for (const thread of selectedThreads) {
+    const identity = buildLifecycleFindingIdentity(thread);
+    const matchedFindingIds = Array.from(
+      new Set(
+        identity.candidateKeys
+          .map((key) => findingIdByAlias.get(key))
+          .filter((findingId): findingId is string => Boolean(findingId)),
+      ),
+    );
+
+    let primaryFindingId = matchedFindingIds[0];
+    if (!primaryFindingId) {
+      primaryFindingId = `finding-${findingIdCounter}`;
+      findingIdCounter += 1;
+      statusByFindingId.set(primaryFindingId, {
+        aliases: new Set(),
+        unresolved: false,
+        resolved: false,
+        severity: null,
+        canonicalKey: null,
+        fingerprintKey: null,
+        fallbackKey: identity.fallbackKey,
+      });
+    }
+
+    const current =
+      statusByFindingId.get(primaryFindingId) ?? {
+        aliases: new Set<string>(),
+        unresolved: false,
+        resolved: false,
+        severity: null,
+        canonicalKey: null,
+        fingerprintKey: null,
+        fallbackKey: identity.fallbackKey,
+      };
+
+    for (const extraFindingId of matchedFindingIds.slice(1)) {
+      if (extraFindingId === primaryFindingId) continue;
+      const extra = statusByFindingId.get(extraFindingId);
+      if (!extra) continue;
+      current.unresolved = current.unresolved || extra.unresolved;
+      current.resolved = current.resolved || extra.resolved;
+      current.severity = pickHigherSeverity(current.severity, extra.severity);
+      current.canonicalKey = current.canonicalKey ?? extra.canonicalKey;
+      current.fingerprintKey = current.fingerprintKey ?? extra.fingerprintKey;
+      current.fallbackKey = current.fallbackKey || extra.fallbackKey;
+      for (const alias of extra.aliases) {
+        current.aliases.add(alias);
+        findingIdByAlias.set(alias, primaryFindingId);
+      }
+      statusByFindingId.delete(extraFindingId);
+    }
+
+    if (thread.isResolved) {
+      current.resolved = true;
+    } else {
+      current.unresolved = true;
+      current.severity = pickHigherSeverity(current.severity, identity.severity);
+    }
+
+    current.canonicalKey = current.canonicalKey ?? identity.canonicalKey;
+    current.fingerprintKey = current.fingerprintKey ?? identity.fingerprintKey;
+    current.fallbackKey = current.fallbackKey || identity.fallbackKey;
+    for (const alias of identity.candidateKeys) {
+      current.aliases.add(alias);
+      findingIdByAlias.set(alias, primaryFindingId);
+    }
+
+    statusByFindingId.set(primaryFindingId, current);
+  }
+
+  let unresolved = 0;
+  let resolved = 0;
+  const unresolvedSeverity = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  const unresolvedSeverityByFindingKey: Record<string, "P0" | "P1" | "P2" | "P3"> = {};
+  const unresolvedFindingKeys: string[] = [];
+  const resolvedFindingKeys: string[] = [];
+  for (const status of statusByFindingId.values()) {
+    const findingKey = chooseLifecycleRepresentativeKey({
+      canonicalKey: status.canonicalKey,
+      fingerprintKey: status.fingerprintKey,
+      fallbackKey: status.fallbackKey,
+    });
+    if (status.unresolved) {
+      unresolved += 1;
+      unresolvedFindingKeys.push(findingKey);
+      if (status.severity) {
+        unresolvedSeverity[status.severity] += 1;
+        unresolvedSeverityByFindingKey[findingKey] = status.severity;
+      }
+    } else if (status.resolved) {
+      resolved += 1;
+      resolvedFindingKeys.push(findingKey);
+    }
+  }
+
+  return {
+    observed: statusByFindingId.size,
+    unresolved,
+    resolved,
+    unresolvedSeverity,
+    unresolvedSeverityByFindingKey,
+    unresolvedFindingKeys: unresolvedFindingKeys.sort(),
+    resolvedFindingKeys: resolvedFindingKeys.sort(),
+  };
 }
 
 export async function resolveReviewThreads(
