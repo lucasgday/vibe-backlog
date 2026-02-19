@@ -23,3 +23,15 @@ Assumption: CLI/text-only surface (monospace, 16px-equivalent body, line-by-line
 
 ### Findings
 - none
+
+## Run 2026-02-19T14:39:42.790Z
+- run_id: issue-73-pr-74-attempt-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Assumption: CLI/text-only interface (monospace output, 16px-equivalent body). The summary block now preserves clearer information hierarchy by aligning severity with displayed lifecycle unresolved totals.
+
+### Findings
+- none

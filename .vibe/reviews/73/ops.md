@@ -23,3 +23,15 @@ Operational behavior remains resilient: lifecycle-total lookup degrades to warni
 
 ### Findings
 - none
+
+## Run 2026-02-19T14:39:42.791Z
+- run_id: issue-73-pr-74-attempt-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operational fallback behavior remains stable: lifecycle lookup still degrades safely to warning+current-run totals when GitHub data is unavailable.
+
+### Findings
+- none

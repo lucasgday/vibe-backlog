@@ -23,3 +23,15 @@ Lifecycle totals are now wired into summary counters and the artifact-whitelist 
 
 ### Findings
 - [P2] Severity line can contradict lifecycle unresolved totals (src/core/review.ts:402)
+
+## Run 2026-02-19T14:39:42.789Z
+- run_id: issue-73-pr-74-attempt-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Reviewed lifecycle severity alignment updates in review summary aggregation and thread-derived totals; behavior now keeps summary counters and severity scope consistent for lifecycle-backed reporting.
+
+### Findings
+- none
