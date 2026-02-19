@@ -85,6 +85,14 @@ function printBranchCleanupReport(result: BranchCleanupResult, context: "standal
   console.log(
     `branch cleanup summary: detected=${result.detected} deleted=${result.deleted} planned=${result.planned} skipped=${result.skipped} errors=${result.errors.length}`,
   );
+  const prMergedDetected =
+    result.prMergedOutcomes.deleted +
+    result.prMergedOutcomes.planned +
+    result.prMergedOutcomes.skipped +
+    result.prMergedOutcomes.error;
+  console.log(
+    `branch cleanup pr-merged: detected=${prMergedDetected} deleted=${result.prMergedOutcomes.deleted} planned=${result.prMergedOutcomes.planned} skipped=${result.prMergedOutcomes.skipped} errors=${result.prMergedOutcomes.error}`,
+  );
 
   if (result.nonMergedBlocked.length) {
     console.log("\nbranch cleanup: non-merged branches require explicit confirmation:");

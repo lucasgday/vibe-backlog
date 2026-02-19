@@ -1,8 +1,9 @@
 import { execa } from "execa";
+import { runGhWithRetry } from "./gh-retry";
 
 type ExecaFn = typeof execa;
 
-export type BranchCleanupCategory = "merged" | "patch-equivalent" | "non-merged";
+export type BranchCleanupCategory = "merged" | "patch-equivalent" | "pr-merged" | "non-merged";
 export type BranchCleanupStatus = "planned" | "deleted" | "skipped" | "error";
 
 export type BranchCleanupCandidate = {
@@ -23,6 +24,13 @@ export type BranchCleanupOptions = {
   fetchPrune?: boolean;
 };
 
+export type BranchCleanupOutcomeCounts = {
+  planned: number;
+  deleted: number;
+  skipped: number;
+  error: number;
+};
+
 export type BranchCleanupResult = {
   dryRun: boolean;
   fetchPrune: boolean;
@@ -38,6 +46,7 @@ export type BranchCleanupResult = {
   warnings: string[];
   candidates: BranchCleanupCandidate[];
   nonMergedBlocked: string[];
+  prMergedOutcomes: BranchCleanupOutcomeCounts;
 };
 
 type BranchRefSnapshot = {
@@ -51,6 +60,16 @@ type GitCommandResult = {
   stderr: string;
   exitCode: number;
 };
+
+type MergedPullRequestSnapshot = {
+  number: number;
+  headRefOid: string | null;
+  mergedAt: string | null;
+};
+
+const GH_PR_LIST_TIMEOUT_MS = 8_000;
+const GH_PR_LIST_RETRY_BACKOFF_MS = [0, 0, 0] as const;
+const GH_PR_LIST_ATTEMPTS = GH_PR_LIST_RETRY_BACKOFF_MS.length;
 
 async function runGitCommand(execaFn: ExecaFn, args: string[]): Promise<GitCommandResult> {
   const result = await execaFn("git", args, { stdio: "pipe", reject: false });
@@ -172,6 +191,105 @@ async function isPatchEquivalent(execaFn: ExecaFn, branch: string, baseRef: stri
   return !hasPlus;
 }
 
+function normalizeSha(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{7,40}$/.test(normalized)) return null;
+  return normalized;
+}
+
+async function resolveBranchHeadSha(execaFn: ExecaFn, branch: string): Promise<string> {
+  const resolved = await runGitCommand(execaFn, ["rev-parse", branch]);
+  if (resolved.exitCode !== 0) {
+    throw new Error(`branch cleanup: unable to resolve HEAD sha for '${branch}'.`);
+  }
+  const sha = normalizeSha(resolved.stdout);
+  if (!sha) {
+    throw new Error(`branch cleanup: invalid HEAD sha for '${branch}'.`);
+  }
+  return sha;
+}
+
+function parseMergedPullRequestRows(stdout: string): MergedPullRequestSnapshot[] {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error("branch cleanup: unexpected gh pr list payload (expected array).");
+  }
+
+  const rows: MergedPullRequestSnapshot[] = [];
+  for (const row of parsed) {
+    if (typeof row !== "object" || row === null) continue;
+    const record = row as Record<string, unknown>;
+    const number = typeof record.number === "number" && Number.isInteger(record.number) && record.number > 0 ? record.number : null;
+    if (!number) continue;
+    const headRaw = typeof record.headRefOid === "string" ? record.headRefOid.trim() : "";
+    const mergedAtRaw = typeof record.mergedAt === "string" ? record.mergedAt.trim() : "";
+    rows.push({
+      number,
+      headRefOid: normalizeSha(headRaw),
+      mergedAt: mergedAtRaw || null,
+    });
+  }
+
+  return rows;
+}
+
+function toMergedAtTimestamp(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function selectMostRecentlyMergedPullRequest(rows: MergedPullRequestSnapshot[]): MergedPullRequestSnapshot | null {
+  if (!rows.length) return null;
+  return [...rows].sort((left, right) => {
+    const mergedAtDelta = toMergedAtTimestamp(right.mergedAt) - toMergedAtTimestamp(left.mergedAt);
+    if (mergedAtDelta !== 0) return mergedAtDelta;
+    return right.number - left.number;
+  })[0] ?? null;
+}
+
+async function listMergedPullRequestsForBranch(execaFn: ExecaFn, branch: string): Promise<MergedPullRequestSnapshot[]> {
+  const listed = await runGhWithRetry(
+    execaFn,
+    [
+      "pr",
+      "list",
+      "--head",
+      branch,
+      "--state",
+      "merged",
+      "--limit",
+      "20",
+      "--json",
+      "number,headRefOid,mergedAt",
+    ],
+    { stdio: "pipe", timeout: GH_PR_LIST_TIMEOUT_MS },
+    {
+      attempts: GH_PR_LIST_ATTEMPTS,
+      backoffMs: Array.from(GH_PR_LIST_RETRY_BACKOFF_MS),
+      idempotent: true,
+    },
+  );
+
+  if (listed.exitCode !== 0) {
+    const detail = listed.stderr.trim() || listed.stdout.trim() || "unknown gh error";
+    throw new Error(`gh pr list failed (${detail})`);
+  }
+
+  return parseMergedPullRequestRows(listed.stdout);
+}
+
+function countOutcomesForCategory(candidates: BranchCleanupCandidate[], category: BranchCleanupCategory): BranchCleanupOutcomeCounts {
+  return {
+    planned: candidates.filter((candidate) => candidate.category === category && candidate.status === "planned").length,
+    deleted: candidates.filter((candidate) => candidate.category === category && candidate.status === "deleted").length,
+    skipped: candidates.filter((candidate) => candidate.category === category && candidate.status === "skipped").length,
+    error: candidates.filter((candidate) => candidate.category === category && candidate.status === "error").length,
+  };
+}
+
 function resolveProtectedBranches(currentBranch: string, baseRef: string): string[] {
   const protectedSet = new Set<string>(["main", currentBranch, baseRef]);
   if (baseRef.startsWith("origin/")) {
@@ -254,9 +372,44 @@ export async function runBranchCleanup(
     }
 
     let deleteFlag: "-d" | "-D" | null = null;
+    if (category === "non-merged" && !forceUnmerged) {
+      try {
+        const mergedPrs = await listMergedPullRequestsForBranch(execaFn, snapshot.branch);
+        if (mergedPrs.length) {
+          const localHeadSha = await resolveBranchHeadSha(execaFn, snapshot.branch);
+          const matchedPr = mergedPrs.find((pr) => pr.headRefOid === localHeadSha);
+          if (matchedPr) {
+            category = "pr-merged";
+          } else {
+            const selectedPr = selectMostRecentlyMergedPullRequest(mergedPrs);
+            const mergedPrHeadSha = selectedPr?.headRefOid ?? null;
+            const reason = mergedPrHeadSha && selectedPr
+              ? `merged PR #${selectedPr.number} head mismatch (local ${localHeadSha.slice(0, 12)} != PR ${mergedPrHeadSha.slice(0, 12)})`
+              : selectedPr
+                ? `merged PR #${selectedPr.number} did not expose head sha`
+                : "merged PR lookup returned rows but none were usable";
+            nonMergedBlocked.push(snapshot.branch);
+            candidates.push({
+              branch: snapshot.branch,
+              upstream: snapshot.upstream,
+              category,
+              deleteFlag: null,
+              status: "skipped",
+              reason,
+              command: null,
+            });
+            continue;
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`branch cleanup: unable to inspect merged PR for '${snapshot.branch}' (${message}); treating as non-merged.`);
+      }
+    }
+
     if (category === "merged") {
       deleteFlag = "-d";
-    } else if (category === "patch-equivalent") {
+    } else if (category === "patch-equivalent" || category === "pr-merged") {
       deleteFlag = "-D";
     } else if (forceUnmerged) {
       deleteFlag = "-D";
@@ -354,6 +507,7 @@ export async function runBranchCleanup(
   const planned = candidates.filter((candidate) => candidate.status === "planned").length;
   const deleted = candidates.filter((candidate) => candidate.status === "deleted").length;
   const skipped = candidates.filter((candidate) => candidate.status === "skipped").length + protectedSkipped.length;
+  const prMergedOutcomes = countOutcomesForCategory(candidates, "pr-merged");
 
   return {
     dryRun,
@@ -370,5 +524,6 @@ export async function runBranchCleanup(
     warnings,
     candidates,
     nonMergedBlocked: nonMergedBlocked.sort((left, right) => left.localeCompare(right)),
+    prMergedOutcomes,
   };
 }
