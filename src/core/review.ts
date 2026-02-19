@@ -298,6 +298,11 @@ function buildFindingsFingerprintKey(findings: ReviewFinding[]): string {
   return findings.map((finding) => computeFindingFingerprint(finding)).sort().join(",");
 }
 
+function selectFollowUpFindings(findings: ReviewFinding[]): ReviewFinding[] {
+  const growthFindings = findings.filter((finding) => finding.pass === "growth");
+  return growthFindings.length > 0 ? growthFindings : findings;
+}
+
 function formatTermination(terminationReason: ReviewTerminationReason): string {
   if (terminationReason === "completed" || terminationReason === "max-attempts") {
     return terminationReason;
@@ -565,6 +570,7 @@ export async function runReviewCommand(
   }
 
   const unresolvedFindings = flattenReviewFindings(finalOutput);
+  const followUpFindings = selectFollowUpFindings(unresolvedFindings);
   let followUp: FollowUpIssue | null = null;
 
   const previewSummary = buildOutcomeSummaryMarkdown({
@@ -584,13 +590,33 @@ export async function runReviewCommand(
     terminationReason,
   });
 
+  const followUpPreviewSummary =
+    followUpFindings === unresolvedFindings
+      ? previewSummary
+      : buildOutcomeSummaryMarkdown({
+          issueId: context.issueId,
+          issueTitle: issue.title,
+          prNumber: pr.number || null,
+          attemptsUsed,
+          maxAttempts,
+          output: finalOutput,
+          unresolvedFindings: followUpFindings,
+          followUp: null,
+          provider: providerRunner,
+          providerSource: executionPlan.source,
+          resumeAttempted,
+          resumeFallback,
+          providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
+          terminationReason,
+        });
+
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
     followUp = await createReviewFollowUpIssue({
       execaFn,
       sourceIssueId: context.issueId,
       sourceIssueTitle: issue.title,
-      findings: unresolvedFindings,
-      reviewSummary: previewSummary,
+      findings: followUpFindings,
+      reviewSummary: followUpPreviewSummary,
       milestoneTitle: issue.milestone,
       dryRun: options.dryRun,
       overrideLabel: options.followupLabel,

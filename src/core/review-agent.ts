@@ -4,7 +4,7 @@ import type { ReviewAgentExecutionPlan } from "./review-provider";
 
 type ExecaFn = typeof execa;
 
-export const REVIEW_PASS_ORDER = ["implementation", "security", "quality", "ux", "ops"] as const;
+export const REVIEW_PASS_ORDER = ["implementation", "security", "quality", "ux", "growth", "ops"] as const;
 export type ReviewPassName = (typeof REVIEW_PASS_ORDER)[number];
 
 export const ReviewSeveritySchema = z.enum(["P0", "P1", "P2", "P3"]);
@@ -110,10 +110,20 @@ type CodexExecutionPlan = ProviderExecutionPlan & { provider: "codex" };
 type ClaudeOrGeminiExecutionPlan = ProviderExecutionPlan & { provider: "claude" | "gemini" };
 
 function buildProviderPrompt(input: ReviewAgentInput): string {
+  const passEnum = REVIEW_PASS_ORDER.join("|");
   const instructions = [
     "You are a code review pass runner.",
+    "Pass guidance:",
+    "- implementation/security/quality/ops: keep findings concrete and tied to changed behavior.",
+    "- ux: act as a Senior Product Designer + Design Systems reviewer. Prioritize system consistency over subjective aesthetics.",
+    "- ux: focus on spacing, typography, hierarchy, iconography/illustration consistency, states, and accessibility.",
+    "- ux: propose actionable fixes with concrete values/tokens when applicable (px, spacing tokens, type sizes, radius, target sizes).",
+    "- ux: if UI context is partial, state assumptions explicitly (for example: 8pt grid, 16px body type, 44px minimum targets).",
+    "- growth: identify product growth opportunities (activation, retention, conversion, instrumentation, experiment gaps) grounded in evidence from the diff/context.",
+    "- growth: each finding should include a concrete next action suitable for a follow-up issue.",
+    "- keep severities strictly in P0|P1|P2|P3.",
     "Return ONLY a JSON object (no markdown) matching this schema:",
-    '{"version":1,"run_id":"string","passes":[{"name":"implementation|security|quality|ux|ops","summary":"string","findings":[{"id":"string","pass":"implementation|security|quality|ux|ops","severity":"P0|P1|P2|P3","title":"string","body":"string","file":"string|null","line":1,"kind":"defect|regression|security|improvement|docs|refactor|test|null"}]}],"autofix":{"applied":true,"summary":"string|null","changed_files":["string"]}}',
+    `{"version":1,"run_id":"string","passes":[{"name":"${passEnum}","summary":"string","findings":[{"id":"string","pass":"${passEnum}","severity":"P0|P1|P2|P3","title":"string","body":"string","file":"string|null","line":1,"kind":"defect|regression|security|improvement|docs|refactor|test|null"}]}],"autofix":{"applied":true,"summary":"string|null","changed_files":["string"]}}`,
     "",
     "Review context JSON:",
     JSON.stringify(input, null, 2),

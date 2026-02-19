@@ -38,6 +38,7 @@ describe.sequential("review templates", () => {
     expect(readFileSync(path.join(result.directory, "security.md"), "utf8")).toContain("# Security Pass");
     expect(readFileSync(path.join(result.directory, "quality.md"), "utf8")).toContain("# Quality Pass");
     expect(readFileSync(path.join(result.directory, "ux.md"), "utf8")).toContain("# UX Pass");
+    expect(readFileSync(path.join(result.directory, "growth.md"), "utf8")).toContain("# Growth Pass");
     expect(readFileSync(path.join(result.directory, "ops.md"), "utf8")).toContain("# Ops Pass");
   });
 
