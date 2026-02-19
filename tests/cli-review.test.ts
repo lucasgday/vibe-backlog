@@ -477,6 +477,55 @@ describe.sequential("cli review", () => {
     ).toBe(true);
   });
 
+  it("reports pass totals and resolved findings after autofix clears findings", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    let agentRuns = 0;
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") {
+        agentRuns += 1;
+        if (agentRuns === 1) {
+          return { stdout: buildAgentOutput({ runId: "run-resolve-1", findingsCount: 1, autofixApplied: true }) };
+        }
+        return { stdout: buildAgentOutput({ runId: "run-resolve-2", findingsCount: 0, autofixApplied: true }) };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "5", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(agentRuns).toBe(2);
+    expect(logs.some((line) => line.includes("Findings observed: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("- security: total=1 unresolved=0 resolved=1"))).toBe(true);
+    expect(logs.some((line) => line.includes("### Resolved Findings"))).toBe(true);
+    expect(logs.some((line) => line.includes("Validate user input"))).toBe(true);
+  });
+
   it("creates follow-up issue with all unresolved findings across passes", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
