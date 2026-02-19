@@ -576,11 +576,6 @@ export async function publishReviewToPullRequest(params: PublishReviewParams): P
     };
   }
 
-  const reviewBody = `vibe review: final report posted.\n\n${REVIEW_SUMMARY_MARKER}`;
-  if (!dryRun) {
-    await runGhWithRetry(execaFn, ["pr", "review", String(pr.number), "--comment", "-b", reviewBody], { stdio: "inherit" });
-  }
-
   const summaryCommentId = await upsertReviewSummaryComment(execaFn, repo, pr.number, summaryBody, dryRun);
   if (dryRun) {
     return {

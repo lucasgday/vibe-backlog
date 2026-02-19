@@ -491,9 +491,6 @@ describe("review PR helpers", () => {
   it("continues publishing when one inline comment fails", async () => {
     let inlineAttempts = 0;
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
-        return { stdout: "" };
-      }
       if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
         return { stdout: JSON.stringify({ headRefOid: "fresh-sha-123" }) };
       }
@@ -562,14 +559,16 @@ describe("review PR helpers", () => {
 
     expect(result.inlinePublished).toBe(1);
     expect(result.inlineSkipped).toBe(1);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "review",
+      ),
+    ).toBe(false);
   });
 
   it("converts absolute finding paths to repo-relative for inline comments", async () => {
     const absoluteFile = path.join(process.cwd(), "src/core/review.ts");
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") {
-        return { stdout: "" };
-      }
       if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
         return { stdout: JSON.stringify({ headRefOid: "fresh-sha-absolute" }) };
       }
@@ -627,5 +626,10 @@ describe("review PR helpers", () => {
 
     expect(result.inlinePublished).toBe(1);
     expect(result.inlineSkipped).toBe(0);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "review",
+      ),
+    ).toBe(false);
   });
 });
