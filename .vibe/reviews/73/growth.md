@@ -59,3 +59,15 @@ Reporting changed in a direction that improves trust, but measurement remains mo
 
 ### Findings
 - [P3] Lifecycle totals source/warning is not emitted as structured signal (src/core/review.ts:422)
+
+## Run 2026-02-19T14:51:20.113Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Lifecycle reporting is more trustworthy, but still hard to analyze at scale.
+
+### Findings
+- [P3] Lifecycle totals source/warnings are not emitted as structured telemetry (src/core/review.ts:422)

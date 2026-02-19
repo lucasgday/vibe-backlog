@@ -59,3 +59,15 @@ Test coverage improved for lifecycle totals and union behavior, but a key regres
 
 ### Findings
 - [P2] Missing regression test for connector-managed thread without fingerprint marker (tests/cli-review.test.ts:617)
+
+## Run 2026-02-19T14:51:20.113Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Coverage is better for lifecycle union, but one key edge case remains untested.
+
+### Findings
+- [P2] No regression test for connector-managed lifecycle thread without fingerprint (tests/cli-review.test.ts:617)

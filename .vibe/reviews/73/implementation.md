@@ -59,3 +59,15 @@ Lifecycle totals integration is mostly correct, but key normalization still brea
 
 ### Findings
 - [P1] Lifecycle/current finding keys are incompatible when thread fingerprint is missing (src/core/review-threads.ts:531)
+
+## Run 2026-02-19T14:51:20.111Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Lifecycle union logic improved, but dedupe keys can still diverge for managed threads without fingerprint markers.
+
+### Findings
+- [P1] Lifecycle/current dedupe breaks when managed thread has no fingerprint marker (src/core/review-threads.ts:531)
