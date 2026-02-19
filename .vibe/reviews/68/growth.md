@@ -47,3 +47,15 @@ No growth-flow regressions identified in this change set.
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:31:34.729Z
+- run_id: issue-68-attempt-4-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Growth-pass findings are preserved in follow-up payloads together with other pass findings as expected.
+
+### Findings
+- none

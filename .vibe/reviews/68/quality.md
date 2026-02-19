@@ -47,3 +47,15 @@ Test coverage was added for connector-authored thread selection under vibe-manag
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:31:34.729Z
+- run_id: issue-68-attempt-4-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Regression tests now assert that follow-up payloads include findings across passes regardless of severity, and connector-thread coverage was added for auto-resolve selection.
+
+### Findings
+- none

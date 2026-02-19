@@ -47,3 +47,15 @@ Connector-managed thread selection is implemented with safeguards that avoid aut
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:31:34.729Z
+- run_id: issue-68-attempt-4-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Follow-up issue creation now consistently includes the full unresolved findings set without pass/severity filtering, matching the required all-sub-agent behavior.
+
+### Findings
+- none
