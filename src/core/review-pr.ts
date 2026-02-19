@@ -54,6 +54,17 @@ export type FollowUpIssue = {
   updated?: boolean;
 };
 
+export type CloseResolvedReviewFollowUpIssuesParams = {
+  execaFn: ExecaFn;
+  sourceIssueId: number;
+  runId: string;
+};
+
+export type CloseResolvedReviewFollowUpIssuesResult = {
+  closedIssueNumbers: number[];
+  warnings: string[];
+};
+
 export type FollowUpLabelOverride = "bug" | "enhancement" | null;
 const FOLLOW_UP_OPTIONAL_LABELS = ["status:backlog"] as const;
 
@@ -778,6 +789,55 @@ function isLikelyMissingLabelError(error: unknown): boolean {
   return text.includes("label") && (text.includes("not found") || text.includes("could not add") || text.includes("invalid"));
 }
 
+export async function closeResolvedReviewFollowUpIssues(
+  params: CloseResolvedReviewFollowUpIssuesParams,
+): Promise<CloseResolvedReviewFollowUpIssuesResult> {
+  const { execaFn, sourceIssueId, runId } = params;
+  const closedIssueNumbers: number[] = [];
+  const warnings: string[] = [];
+
+  let repo = "";
+  try {
+    repo = await resolveRepoNameWithOwner(execaFn);
+  } catch (error) {
+    warnings.push(`review: follow-up auto-close skipped for #${sourceIssueId} (unable to resolve repo: ${errorText(error)})`);
+    return { closedIssueNumbers, warnings };
+  }
+
+  let openFollowUps: OpenFollowUpIssue[] = [];
+  try {
+    openFollowUps = await listOpenFollowUpIssues(execaFn, repo, sourceIssueId);
+  } catch (error) {
+    warnings.push(
+      `review: follow-up auto-close skipped for #${sourceIssueId} (unable to list open follow-ups: ${errorText(error)})`,
+    );
+    return { closedIssueNumbers, warnings };
+  }
+
+  if (!openFollowUps.length) {
+    return { closedIssueNumbers, warnings };
+  }
+
+  const closeComment =
+    `Auto-closed by \`vibe review\` run \`${runId}\` ` + `after unresolved findings reached 0 for source issue #${sourceIssueId}.`;
+
+  for (const followUp of openFollowUps) {
+    try {
+      await runGhWithRetry(
+        execaFn,
+        ["issue", "close", String(followUp.number), "--comment", closeComment],
+        { stdio: "pipe" },
+        { attempts: 3, backoffMs: [0, 0, 0], idempotent: true },
+      );
+      closedIssueNumbers.push(followUp.number);
+    } catch (error) {
+      warnings.push(`review: follow-up auto-close failed for #${followUp.number}: ${errorText(error)}`);
+    }
+  }
+
+  return { closedIssueNumbers, warnings };
+}
+
 async function createIssueWithLabels(params: {
   execaFn: ExecaFn;
   title: string;
@@ -803,26 +863,39 @@ async function createIssueWithLabels(params: {
   }
 }
 
+type OpenFollowUpIssue = {
+  number: number;
+  url: string | null;
+};
+
+async function listOpenFollowUpIssues(execaFn: ExecaFn, repo: string, sourceIssueId: number): Promise<OpenFollowUpIssue[]> {
+  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/issues?state=open`, "gh open issues");
+  const matches: OpenFollowUpIssue[] = [];
+  const seenIssueNumbers = new Set<number>();
+  for (const row of rows) {
+    if (typeof row.pull_request === "object" && row.pull_request !== null) continue;
+    const number = parsePositiveInt(row.number);
+    if (!number || seenIssueNumbers.has(number)) continue;
+    const body = parseNullableString(row.body);
+    if (!body) continue;
+    const markerIssue = extractFollowUpSourceIssueIdFromBody(body);
+    if (markerIssue !== sourceIssueId) continue;
+    seenIssueNumbers.add(number);
+    matches.push({
+      number,
+      url: parseNullableString(row.html_url) ?? parseNullableString(row.url),
+    });
+  }
+  return matches;
+}
+
 async function findOpenFollowUpIssue(
   execaFn: ExecaFn,
   repo: string,
   sourceIssueId: number,
 ): Promise<{ number: number; url: string | null } | null> {
-  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/issues?state=open`, "gh open issues");
-  for (const row of rows) {
-    if (typeof row.pull_request === "object" && row.pull_request !== null) continue;
-    const number = parsePositiveInt(row.number);
-    if (!number) continue;
-    const body = parseNullableString(row.body);
-    if (!body) continue;
-    const markerIssue = extractFollowUpSourceIssueIdFromBody(body);
-    if (markerIssue !== sourceIssueId) continue;
-    return {
-      number,
-      url: parseNullableString(row.html_url) ?? parseNullableString(row.url),
-    };
-  }
-  return null;
+  const matches = await listOpenFollowUpIssues(execaFn, repo, sourceIssueId);
+  return matches[0] ?? null;
 }
 
 async function editIssueWithLabels(params: {

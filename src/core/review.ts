@@ -13,6 +13,7 @@ import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from 
 import {
   buildReviewSummaryBody,
   buildReviewPolicyKey,
+  closeResolvedReviewFollowUpIssues,
   computeFindingFingerprint,
   createReviewFollowUpIssue,
   fetchIssueSnapshot,
@@ -368,6 +369,8 @@ function buildOutcomeSummaryMarkdown(params: {
   resolvedFindings: ReviewFinding[];
   unresolvedFindings: ReviewFinding[];
   followUp: FollowUpIssue | null;
+  closedFollowUpIssueNumbers: number[];
+  followUpCloseWarnings: string[];
   provider: "command" | "codex" | "claude" | "gemini";
   providerSource: "flag" | "env" | "runtime" | "host" | "bin";
   resumeAttempted: boolean;
@@ -399,6 +402,19 @@ function buildOutcomeSummaryMarkdown(params: {
     lines.push(`- Follow-up issue: ${params.followUp.url} (${params.followUp.label})`);
   } else if (params.followUp && !params.followUp.created) {
     lines.push(`- Follow-up issue: dry-run (${params.followUp.label})`);
+  }
+
+  lines.push("", "### Follow-up Closure");
+  if (params.closedFollowUpIssueNumbers.length) {
+    lines.push(`- Closed follow-ups: ${params.closedFollowUpIssueNumbers.map((issueNumber) => `#${issueNumber}`).join(", ")}`);
+  } else {
+    lines.push("- none");
+  }
+  if (params.followUpCloseWarnings.length) {
+    lines.push("", "### Follow-up Closure Warnings");
+    for (const warning of params.followUpCloseWarnings) {
+      lines.push(`- ${warning}`);
+    }
   }
 
   lines.push("", "### Pass Results");
@@ -641,6 +657,8 @@ export async function runReviewCommand(
   const allFindings = Array.from(allFindingsByFingerprint.values());
   const resolvedFindings = computeResolvedFindings(allFindings, unresolvedFindings);
   let followUp: FollowUpIssue | null = null;
+  let closedFollowUpIssueNumbers: number[] = [];
+  let followUpCloseWarnings: string[] = [];
 
   const previewSummary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
@@ -653,6 +671,8 @@ export async function runReviewCommand(
     resolvedFindings,
     unresolvedFindings,
     followUp: null,
+    closedFollowUpIssueNumbers: [],
+    followUpCloseWarnings: [],
     provider: providerRunner,
     providerSource: executionPlan.source,
     resumeAttempted,
@@ -673,6 +693,15 @@ export async function runReviewCommand(
       overrideLabel: options.followupLabel,
     });
   }
+  if (unresolvedFindings.length === 0 && !options.dryRun) {
+    const closeResult = await closeResolvedReviewFollowUpIssues({
+      execaFn,
+      sourceIssueId: context.issueId,
+      runId: finalOutput.run_id,
+    });
+    closedFollowUpIssueNumbers = closeResult.closedIssueNumbers;
+    followUpCloseWarnings = closeResult.warnings;
+  }
 
   const summary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
@@ -685,6 +714,8 @@ export async function runReviewCommand(
     resolvedFindings,
     unresolvedFindings,
     followUp,
+    closedFollowUpIssueNumbers,
+    followUpCloseWarnings,
     provider: providerRunner,
     providerSource: executionPlan.source,
     resumeAttempted,

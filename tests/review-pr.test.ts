@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  closeResolvedReviewFollowUpIssues,
   REVIEW_GATE_SKIPPED_MARKER,
   REVIEW_POLICY_MARKER_PREFIX,
   REVIEW_SUMMARY_MARKER,
@@ -486,6 +487,165 @@ describe("review PR helpers", () => {
     expect(result.updated).toBe(true);
     expect(result.number).toBe(700);
     expect(result.url).toBe("https://example.test/issues/700");
+  });
+
+  it("closes all open follow-up issues matching the same source issue marker", async () => {
+    const closedComments: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 701,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\nfirst",
+              html_url: "https://example.test/issues/701",
+            },
+            {
+              number: 702,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\nsecond",
+              html_url: "https://example.test/issues/702",
+            },
+            {
+              number: 703,
+              body: "<!-- vibe:review-followup:source-issue:35 -->\nother issue",
+              html_url: "https://example.test/issues/703",
+            },
+            {
+              number: 704,
+              pull_request: { url: "https://api.github.test/pulls/704" },
+              body: "<!-- vibe:review-followup:source-issue:34 -->\npr row",
+              html_url: "https://example.test/issues/704",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close") {
+        const commentIndex = args.findIndex((entry) => entry === "--comment");
+        const closeComment = commentIndex >= 0 ? String(args[commentIndex + 1] ?? "") : "";
+        closedComments.push(closeComment);
+        return { stdout: "" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await closeResolvedReviewFollowUpIssues({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      runId: "run-clean",
+    });
+
+    expect(result.closedIssueNumbers).toEqual([701, 702]);
+    expect(result.warnings).toEqual([]);
+    expect(closedComments).toHaveLength(2);
+    for (const closeComment of closedComments) {
+      expect(closeComment).toContain("run-clean");
+      expect(closeComment).toContain("source issue #34");
+    }
+  });
+
+  it("retries follow-up auto-close on transient errors and succeeds", async () => {
+    let closeAttempts = 0;
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 710,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\ntransient",
+              html_url: "https://example.test/issues/710",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close" && args[2] === "710") {
+        closeAttempts += 1;
+        if (closeAttempts === 1) {
+          const error = new Error("temporary timeout");
+          (error as Error & { stderr?: string }).stderr = "timeout while contacting api.github.com";
+          throw error;
+        }
+        return { stdout: "" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await closeResolvedReviewFollowUpIssues({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      runId: "run-retry-success",
+    });
+
+    expect(closeAttempts).toBe(2);
+    expect(result.closedIssueNumbers).toEqual([710]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("returns warning and continues when follow-up auto-close fails after retries", async () => {
+    let closeAttempts = 0;
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 711,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\npersistent",
+              html_url: "https://example.test/issues/711",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close" && args[2] === "711") {
+        closeAttempts += 1;
+        const error = new Error("connection timeout");
+        (error as Error & { stderr?: string }).stderr = "timeout while contacting api.github.com";
+        throw error;
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await closeResolvedReviewFollowUpIssues({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      runId: "run-retry-fail",
+    });
+
+    expect(closeAttempts).toBe(3);
+    expect(result.closedIssueNumbers).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("#711");
+  });
+
+  it("does nothing when there are no open follow-up issues to close", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close") {
+        throw new Error("should not close when no follow-up exists");
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await closeResolvedReviewFollowUpIssues({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      runId: "run-noop",
+    });
+
+    expect(result.closedIssueNumbers).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
   it("continues publishing when one inline comment fails", async () => {
