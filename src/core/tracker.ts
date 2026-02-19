@@ -22,6 +22,8 @@ const TITLE_SIGNAL_WEIGHT = 3;
 const BODY_SIGNAL_WEIGHT = 1;
 const MODULE_RATIO_THRESHOLD = 1.5;
 const MILESTONE_CONFIDENCE_THRESHOLD = 0.8;
+const DEFAULT_DELIVERY_OBJECTIVE = "Delivery Goal";
+const GENERATED_MILESTONE_DESCRIPTION = "Auto-generated delivery milestone by vibe tracker reconcile.";
 
 const STOP_WORDS = new Set([
   "the",
@@ -91,17 +93,7 @@ const STOP_WORDS = new Set([
   "new",
 ]);
 
-export const TRACKER_BOOTSTRAP_MILESTONES: readonly TrackerMilestoneDefinition[] = [
-  {
-    title: "CLI usable (repos con .vibe)",
-    description:
-      "CLI MVP usable across external repos that install .vibe: preflight/guard/status/pr-open/postflight + docs scaffolding.",
-  },
-  {
-    title: "UI MVP (local cockpit)",
-    description: "UI surface for local project cockpit: dashboard, actions, logs, and safe run/deploy controls.",
-  },
-];
+export const TRACKER_BOOTSTRAP_MILESTONES: readonly TrackerMilestoneDefinition[] = [];
 
 export const TRACKER_BOOTSTRAP_LABELS: readonly TrackerLabelDefinition[] = [
   {
@@ -153,6 +145,23 @@ type ModuleProfile = {
   slugTokens: string[];
 };
 
+export type SemanticMilestoneSuggestion = {
+  milestoneTitle: string | null;
+  source: "inferred" | "generated" | "fallback" | "none";
+  confidence: number | null;
+  suggestions: string[];
+  modules: string[];
+  requiresCreation: boolean;
+};
+
+export type SemanticMilestoneIssueSeed = {
+  number: number;
+  title: string;
+  body?: string;
+  labels?: string[];
+  milestone?: string | null;
+};
+
 export type TrackerReconcilePromptRequest = {
   kind: "module" | "milestone";
   issueNumber: number;
@@ -175,7 +184,7 @@ export type TrackerReconcileIssueUpdate = {
   setMilestone: string | null;
   moduleSource: "existing" | "explicit" | "scored" | "fallback" | "prompt" | "none";
   moduleConfidence: number | null;
-  milestoneSource: "existing" | "inferred" | "fallback" | "prompt" | "none";
+  milestoneSource: "existing" | "inferred" | "generated" | "fallback" | "prompt" | "none";
   milestoneConfidence: number | null;
   notes: string[];
 };
@@ -189,6 +198,7 @@ export type TrackerReconcileResult = {
   issueUpdates: TrackerReconcileIssueUpdate[];
   unresolvedIssueIds: number[];
   createdLabels: string[];
+  createdMilestones: string[];
   commands: string[][];
 };
 
@@ -207,7 +217,88 @@ function normalizeTrackerLabelName(value: string): string {
 }
 
 function normalizeMilestoneTitle(value: string): string {
-  return value.trim().toLowerCase();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ": ")
+    .replace(/\s*\/\s*/g, "/");
+}
+
+function toTitleCaseToken(token: string): string {
+  if (!token) return token;
+  if (token.length === 1) return token.toUpperCase();
+  return token[0].toUpperCase() + token.slice(1).toLowerCase();
+}
+
+function dedupeTokens(tokens: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    const normalized = token.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function moduleAreaName(moduleLabel: string): string {
+  const slug = moduleLabel.trim().toLowerCase().replace(/^module:/, "");
+  if (!slug) return "";
+  const tokens = slug
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.map(toTitleCaseToken).join(" ");
+}
+
+function issueGoalTokens(issue: TrackerIssueSnapshot, modules: string[]): string[] {
+  const moduleTokens = new Set<string>();
+  for (const moduleLabel of modules) {
+    for (const token of extractModuleSlugTokens(moduleLabel)) {
+      moduleTokens.add(token.toLowerCase());
+    }
+  }
+
+  const merged = dedupeTokens([...tokenizeText(issue.title), ...tokenizeText(issue.body)]);
+  return merged.filter((token) => !moduleTokens.has(token));
+}
+
+function inferAreaFromIssue(issue: TrackerIssueSnapshot, modules: string[]): string {
+  for (const moduleLabel of modules) {
+    const area = moduleAreaName(moduleLabel);
+    if (area) return area;
+  }
+
+  const titleTokens = dedupeTokens(tokenizeText(issue.title));
+  if (titleTokens.length) {
+    return titleTokens.slice(0, 2).map(toTitleCaseToken).join(" ");
+  }
+
+  return "Product";
+}
+
+export function buildDeliveryGoalMilestoneTitle(issue: {
+  title: string;
+  body?: string;
+  labels?: string[];
+}, modules: string[]): string {
+  const synthetic: TrackerIssueSnapshot = {
+    number: 0,
+    title: issue.title.trim(),
+    body: typeof issue.body === "string" ? issue.body : "",
+    labels: Array.isArray(issue.labels) ? issue.labels.slice() : [],
+    milestone: null,
+    state: "open",
+  };
+  const area = inferAreaFromIssue(synthetic, modules);
+  const goalTokens = issueGoalTokens(synthetic, modules);
+  const goal = (goalTokens.length ? goalTokens.slice(0, 4) : [DEFAULT_DELIVERY_OBJECTIVE.toLowerCase()])
+    .map(toTitleCaseToken)
+    .join(" ");
+
+  return `${area}: ${goal}`.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
@@ -286,6 +377,50 @@ function parseRepositoryLabelNames(rows: JsonRecord[]): string[] {
     .filter((value): value is string => typeof value === "string")
     .map((name) => name.trim())
     .filter(Boolean);
+}
+
+function coerceSemanticIssueSeed(seed: SemanticMilestoneIssueSeed): TrackerIssueSnapshot | null {
+  const number = seed.number;
+  if (!Number.isInteger(number) || number <= 0) {
+    return null;
+  }
+
+  const title = seed.title.trim();
+  if (!title) {
+    return null;
+  }
+
+  const body = typeof seed.body === "string" ? seed.body : "";
+  const labels = Array.isArray(seed.labels)
+    ? seed.labels
+        .map((label) => (typeof label === "string" ? label.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const milestoneRaw = typeof seed.milestone === "string" ? seed.milestone.trim() : "";
+
+  return {
+    number,
+    title,
+    body,
+    labels,
+    milestone: milestoneRaw || null,
+    state: "open",
+  };
+}
+
+function collectMilestoneTitlesFromIssues(issues: TrackerIssueSnapshot[]): string[] {
+  const seen = new Set<string>();
+  const titles: string[] = [];
+
+  for (const issue of issues) {
+    if (!issue.milestone) continue;
+    const normalized = normalizeMilestoneTitle(issue.milestone);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    titles.push(issue.milestone);
+  }
+
+  return titles;
 }
 
 function upsertWeightedToken(map: Map<string, number>, token: string, weight: number): void {
@@ -642,6 +777,13 @@ function buildGeneratedModuleLabelDefinition(name: string): TrackerLabelDefiniti
   };
 }
 
+function buildGeneratedMilestoneDefinition(title: string): TrackerMilestoneDefinition {
+  return {
+    title,
+    description: GENERATED_MILESTONE_DESCRIPTION,
+  };
+}
+
 async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
   const response = await execaFn("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
     stdio: "pipe",
@@ -699,6 +841,249 @@ function canonicalizeMilestoneTitle(
   return milestoneTitleMap.get(normalized) ?? null;
 }
 
+type TrackerSemanticContext = {
+  moduleLabelMap: Map<string, string>;
+  milestoneTitles: string[];
+  milestoneTitleMap: Map<string, string>;
+  moduleProfiles: Map<string, ModuleProfile>;
+  milestoneCountsByModule: Map<string, Map<string, number>>;
+};
+
+function buildTrackerSemanticContext(params: {
+  labelNames: string[];
+  milestoneTitles: string[];
+  allIssues: TrackerIssueSnapshot[];
+}): TrackerSemanticContext {
+  const moduleLabelMap = extractModuleLabelMap(params.labelNames);
+  const milestoneTitleMap = new Map<string, string>();
+  for (const title of params.milestoneTitles) {
+    const key = normalizeMilestoneTitle(title);
+    if (!milestoneTitleMap.has(key)) {
+      milestoneTitleMap.set(key, title);
+    }
+  }
+
+  const trainingIssues = params.allIssues.filter((issue) => issueModuleLabels(issue).length > 0);
+  const moduleProfiles = buildModuleProfiles(moduleLabelMap, trainingIssues);
+  const milestoneCountsByModule = buildMilestoneCountsByModule(trainingIssues, moduleLabelMap);
+
+  return {
+    moduleLabelMap,
+    milestoneTitles: params.milestoneTitles.slice(),
+    milestoneTitleMap,
+    moduleProfiles,
+    milestoneCountsByModule,
+  };
+}
+
+function resolveSemanticMilestoneFromContext(params: {
+  issue: TrackerIssueSnapshot;
+  modules: string[];
+  context: TrackerSemanticContext;
+  fallbackMilestone: string | null;
+}): SemanticMilestoneSuggestion {
+  const { issue, modules, context, fallbackMilestone } = params;
+
+  const inferred = inferMilestone(modules, context.milestoneCountsByModule);
+  if (inferred.milestone) {
+    return {
+      milestoneTitle: inferred.milestone,
+      source: "inferred",
+      confidence: inferred.confidence,
+      suggestions: inferred.suggestions,
+      modules,
+      requiresCreation: false,
+    };
+  }
+
+  if (fallbackMilestone) {
+    return {
+      milestoneTitle: fallbackMilestone,
+      source: "fallback",
+      confidence: null,
+      suggestions: inferred.suggestions,
+      modules,
+      requiresCreation: false,
+    };
+  }
+
+  const generated = buildDeliveryGoalMilestoneTitle(issue, modules);
+  const canonicalExisting = canonicalizeMilestoneTitle(generated, context.milestoneTitleMap);
+  if (canonicalExisting) {
+    return {
+      milestoneTitle: canonicalExisting,
+      source: "inferred",
+      confidence: inferred.confidence,
+      suggestions: inferred.suggestions,
+      modules,
+      requiresCreation: false,
+    };
+  }
+
+  return {
+    milestoneTitle: generated || null,
+    source: generated ? "generated" : "none",
+    confidence: inferred.confidence,
+    suggestions: inferred.suggestions.length ? inferred.suggestions : context.milestoneTitles.slice(0, 5),
+    modules,
+    requiresCreation: Boolean(generated),
+  };
+}
+
+function resolveSemanticMilestoneForIssueInput(
+  params: {
+    title: string;
+    body?: string;
+    labels?: string[];
+    fallbackMilestone?: string | null;
+  },
+  context: TrackerSemanticContext,
+): SemanticMilestoneSuggestion {
+  const syntheticIssue: TrackerIssueSnapshot = {
+    number: 0,
+    title: params.title.trim(),
+    body: typeof params.body === "string" ? params.body : "",
+    labels: Array.isArray(params.labels) ? params.labels.slice() : [],
+    milestone: null,
+    state: "open",
+  };
+
+  const existingModules = issueModuleLabels(syntheticIssue).map((moduleLower) =>
+    canonicalizeModuleLabel(moduleLower, context.moduleLabelMap),
+  );
+  const inferredModules = inferModules(syntheticIssue, context.moduleProfiles);
+  const modules = inferredModules.modules.length
+    ? inferredModules.modules.map((moduleLower) => canonicalizeModuleLabel(moduleLower, context.moduleLabelMap))
+    : existingModules;
+  const effectiveModules = Array.from(new Set(modules.map((moduleLabel) => normalizeTrackerLabelName(moduleLabel))));
+
+  const fallbackRaw = typeof params.fallbackMilestone === "string" ? params.fallbackMilestone.trim() : "";
+  const fallbackMilestone = fallbackRaw ? canonicalizeMilestoneTitle(fallbackRaw, context.milestoneTitleMap) : null;
+  return resolveSemanticMilestoneFromContext({
+    issue: syntheticIssue,
+    modules: effectiveModules,
+    context,
+    fallbackMilestone,
+  });
+}
+
+export function suggestSemanticMilestonesForIssueSet(params: {
+  issues: SemanticMilestoneIssueSeed[];
+  fallbackMilestone?: string | null;
+}): Map<number, SemanticMilestoneSuggestion> {
+  const allIssues = params.issues
+    .map((issue) => coerceSemanticIssueSeed(issue))
+    .filter((issue): issue is TrackerIssueSnapshot => issue !== null);
+
+  if (!allIssues.length) {
+    return new Map();
+  }
+
+  const labelNames = Array.from(
+    new Set(
+      allIssues
+        .flatMap((issue) => issue.labels)
+        .map((label) => label.trim())
+        .filter(Boolean),
+    ),
+  );
+  const milestoneTitles = collectMilestoneTitlesFromIssues(allIssues);
+
+  const context = buildTrackerSemanticContext({
+    labelNames,
+    milestoneTitles,
+    allIssues,
+  });
+
+  const suggestions = new Map<number, SemanticMilestoneSuggestion>();
+  for (const issue of allIssues) {
+    if (issue.milestone) continue;
+    const suggestion = resolveSemanticMilestoneForIssueInput(
+      {
+        title: issue.title,
+        body: issue.body,
+        labels: issue.labels,
+        fallbackMilestone: params.fallbackMilestone,
+      },
+      context,
+    );
+    suggestions.set(issue.number, suggestion);
+  }
+
+  return suggestions;
+}
+
+export async function suggestSemanticMilestoneForIssue(
+  params: {
+    title: string;
+    body?: string;
+    labels?: string[];
+    fallbackMilestone?: string | null;
+  },
+  dependencies: {
+    execaFn?: ExecaFn;
+    repo?: string | null;
+  } = {},
+): Promise<SemanticMilestoneSuggestion> {
+  const execaFn = dependencies.execaFn ?? execa;
+  const repo = dependencies.repo?.trim() ? dependencies.repo.trim() : await resolveRepoNameWithOwner(execaFn);
+  const [labelNames, milestoneTitles, allIssues] = await Promise.all([
+    listRepositoryLabelNames(execaFn, repo),
+    listRepositoryMilestoneTitles(execaFn, repo),
+    listRepositoryIssues(execaFn, repo),
+  ]);
+
+  const context = buildTrackerSemanticContext({
+    labelNames,
+    milestoneTitles,
+    allIssues,
+  });
+  return resolveSemanticMilestoneForIssueInput(params, context);
+}
+
+export async function ensureRepositoryMilestone(params: {
+  execaFn?: ExecaFn;
+  repo?: string | null;
+  title: string;
+  description?: string | null;
+}): Promise<{ repo: string; milestoneTitle: string; created: boolean }> {
+  const execaFn = params.execaFn ?? execa;
+  const repo = params.repo?.trim() ? params.repo.trim() : await resolveRepoNameWithOwner(execaFn);
+  const milestoneTitle = params.title.trim();
+  if (!milestoneTitle) {
+    throw new Error("tracker: milestone title cannot be empty.");
+  }
+
+  const milestoneTitles = await listRepositoryMilestoneTitles(execaFn, repo);
+  const milestoneMap = new Map<string, string>();
+  for (const title of milestoneTitles) {
+    const key = normalizeMilestoneTitle(title);
+    if (!milestoneMap.has(key)) {
+      milestoneMap.set(key, title);
+    }
+  }
+
+  const existing = canonicalizeMilestoneTitle(milestoneTitle, milestoneMap);
+  if (existing) {
+    return {
+      repo,
+      milestoneTitle: existing,
+      created: false,
+    };
+  }
+
+  const description = typeof params.description === "string" && params.description.trim() ? params.description.trim() : GENERATED_MILESTONE_DESCRIPTION;
+  await execaFn("gh", ["api", "--method", "POST", `repos/${repo}/milestones`, "-f", `title=${milestoneTitle}`, "-f", `description=${description}`], {
+    stdio: "pipe",
+  });
+
+  return {
+    repo,
+    milestoneTitle,
+    created: true,
+  };
+}
+
 export function selectMissingTrackerMilestones(existingTitles: Iterable<string>): TrackerMilestoneDefinition[] {
   const existing = new Set(
     Array.from(existingTitles)
@@ -737,16 +1122,30 @@ export async function shouldSuggestTrackerBootstrap(cwd: string = process.cwd())
   }
 }
 
-export async function writeTrackerBootstrapMarker(nameWithOwner: string, cwd: string = process.cwd()): Promise<string> {
+export async function writeTrackerBootstrapMarker(
+  nameWithOwner: string,
+  options: {
+    milestones?: Iterable<string>;
+    labels?: Iterable<string>;
+  } = {},
+  cwd: string = process.cwd(),
+): Promise<string> {
   const markerPath = getTrackerBootstrapMarkerPath(cwd);
 
   await mkdir(path.dirname(markerPath), { recursive: true });
+  const milestones = Array.from(options.milestones ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const labels = Array.from(options.labels ?? TRACKER_BOOTSTRAP_LABELS.map((label) => label.name))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
   const payload = {
     version: 1,
     configured_at: new Date().toISOString(),
     repository: nameWithOwner,
-    milestones: TRACKER_BOOTSTRAP_MILESTONES.map((milestone) => milestone.title),
-    labels: TRACKER_BOOTSTRAP_LABELS.map((label) => label.name),
+    milestones,
+    labels,
   };
 
   await writeFile(markerPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -776,14 +1175,12 @@ export async function runTrackerReconcile(
     listRepositoryIssues(execaFn, repo),
   ]);
 
-  const moduleLabelMap = extractModuleLabelMap(labelNames);
-  const milestoneTitleMap = new Map<string, string>();
-  for (const title of milestoneTitles) {
-    const key = normalizeMilestoneTitle(title);
-    if (!milestoneTitleMap.has(key)) {
-      milestoneTitleMap.set(key, title);
-    }
-  }
+  const semanticContext = buildTrackerSemanticContext({
+    labelNames,
+    milestoneTitles,
+    allIssues,
+  });
+  const { moduleLabelMap, milestoneTitleMap, moduleProfiles } = semanticContext;
 
   let fallbackMilestone: string | null = null;
   if (fallbackMilestoneRaw) {
@@ -792,10 +1189,6 @@ export async function runTrackerReconcile(
       throw new Error(`tracker reconcile: --fallback-milestone '${fallbackMilestoneRaw}' does not exist in repository.`);
     }
   }
-
-  const trainingIssues = allIssues.filter((issue) => issueModuleLabels(issue).length > 0);
-  const moduleProfiles = buildModuleProfiles(moduleLabelMap, trainingIssues);
-  const milestoneCountsByModule = buildMilestoneCountsByModule(trainingIssues, moduleLabelMap);
 
   const openIssues = allIssues
     .filter((issue) => issue.state === "open")
@@ -806,6 +1199,7 @@ export async function runTrackerReconcile(
   const unresolvedIssueIds: number[] = [];
   const missingDecisionIssueIds = new Set<number>();
   const labelsToCreate = new Set<string>();
+  const milestonesToCreate = new Set<string>();
 
   for (const issue of openIssues) {
     const existingModuleLower = issueModuleLabels(issue);
@@ -849,14 +1243,12 @@ export async function runTrackerReconcile(
           moduleSource = "prompt";
           notes.push("module selected via prompt");
         } else {
-          missingDecisionIssueIds.add(issue.number);
           unresolvedIssueIds.push(issue.number);
           notes.push("module unresolved: prompt did not return a module label");
         }
       } else {
-        missingDecisionIssueIds.add(issue.number);
         unresolvedIssueIds.push(issue.number);
-        notes.push("module unresolved: provide --fallback-module or run interactively");
+        notes.push("module unresolved: no semantic/fallback match");
       }
     }
 
@@ -876,40 +1268,42 @@ export async function runTrackerReconcile(
     let milestoneConfidence: number | null = null;
 
     if (missingMilestone) {
-      const inferredMilestone = inferMilestone(effectiveModules, milestoneCountsByModule);
-      if (inferredMilestone.milestone) {
-        setMilestone = inferredMilestone.milestone;
-        milestoneSource = "inferred";
-        milestoneConfidence = inferredMilestone.confidence;
-      } else if (fallbackMilestone) {
-        setMilestone = fallbackMilestone;
-        milestoneSource = "fallback";
+      const resolvedMilestone = resolveSemanticMilestoneFromContext({
+        issue,
+        modules: effectiveModules,
+        context: semanticContext,
+        fallbackMilestone,
+      });
+
+      if (resolvedMilestone.milestoneTitle) {
+        setMilestone = resolvedMilestone.milestoneTitle;
+        milestoneSource = resolvedMilestone.source;
+        milestoneConfidence = resolvedMilestone.confidence;
+        if (resolvedMilestone.requiresCreation) {
+          milestonesToCreate.add(setMilestone);
+          notes.push("milestone planned for creation");
+        }
       } else if (!options.dryRun && isInteractive && promptFn && milestoneTitles.length > 0) {
         const promptValue = await promptFn({
           kind: "milestone",
           issueNumber: issue.number,
           issueTitle: issue.title,
-          suggestions: inferredMilestone.suggestions.length ? inferredMilestone.suggestions : milestoneTitles,
+          suggestions: resolvedMilestone.suggestions.length ? resolvedMilestone.suggestions : milestoneTitles,
         });
-
         const canonicalMilestone = typeof promptValue === "string" ? canonicalizeMilestoneTitle(promptValue, milestoneTitleMap) : null;
         if (canonicalMilestone) {
           setMilestone = canonicalMilestone;
           milestoneSource = "prompt";
           notes.push("milestone selected via prompt");
-        } else {
-          missingDecisionIssueIds.add(issue.number);
-          if (!unresolvedIssueIds.includes(issue.number)) {
-            unresolvedIssueIds.push(issue.number);
-          }
-          notes.push("milestone unresolved: prompt did not match an existing milestone");
         }
-      } else {
-        missingDecisionIssueIds.add(issue.number);
+      }
+
+      if (!setMilestone) {
         if (!unresolvedIssueIds.includes(issue.number)) {
           unresolvedIssueIds.push(issue.number);
         }
-        notes.push("milestone unresolved: provide --fallback-milestone or run interactively");
+        missingDecisionIssueIds.add(issue.number);
+        notes.push("milestone unresolved: no semantic or prompt match");
       }
     }
 
@@ -951,6 +1345,25 @@ export async function runTrackerReconcile(
 
   const commands: string[][] = [];
   const createdLabels: string[] = [];
+  const createdMilestones: string[] = [];
+
+  const milestonesToCreateOrdered = Array.from(milestonesToCreate)
+    .filter((title) => !milestoneTitleMap.has(normalizeMilestoneTitle(title)))
+    .sort((left, right) => left.localeCompare(right));
+
+  for (const milestoneTitle of milestonesToCreateOrdered) {
+    const definition = buildGeneratedMilestoneDefinition(milestoneTitle);
+    commands.push([
+      "api",
+      "--method",
+      "POST",
+      `repos/${repo}/milestones`,
+      "-f",
+      `title=${definition.title}`,
+      "-f",
+      `description=${definition.description}`,
+    ]);
+  }
 
   const labelsToCreateOrdered = Array.from(labelsToCreate)
     .filter((label) => !moduleLabelMap.has(label))
@@ -975,6 +1388,17 @@ export async function runTrackerReconcile(
   const shouldApply = !options.dryRun && !degradedToPlanOnly;
 
   if (shouldApply) {
+    for (const milestoneTitle of milestonesToCreateOrdered) {
+      const definition = buildGeneratedMilestoneDefinition(milestoneTitle);
+      await execaFn(
+        "gh",
+        ["api", "--method", "POST", `repos/${repo}/milestones`, "-f", `title=${definition.title}`, "-f", `description=${definition.description}`],
+        { stdio: "inherit" },
+      );
+      milestoneTitleMap.set(normalizeMilestoneTitle(definition.title), definition.title);
+      createdMilestones.push(definition.title);
+    }
+
     for (const labelLower of labelsToCreateOrdered) {
       const definition = buildGeneratedModuleLabelDefinition(labelLower);
       await execaFn(
@@ -989,7 +1413,9 @@ export async function runTrackerReconcile(
     for (const update of issueUpdates) {
       const args = ["issue", "edit", String(update.issueNumber)];
       if (update.setMilestone) {
-        args.push("--milestone", update.setMilestone);
+        const normalizedMilestone = normalizeMilestoneTitle(update.setMilestone);
+        const canonicalMilestone = milestoneTitleMap.get(normalizedMilestone) ?? update.setMilestone;
+        args.push("--milestone", canonicalMilestone);
       }
       if (update.addLabels.length > 0) {
         const canonicalLabels = update.addLabels
@@ -1014,6 +1440,7 @@ export async function runTrackerReconcile(
     issueUpdates,
     unresolvedIssueIds: Array.from(new Set(unresolvedIssueIds)).sort((a, b) => a - b),
     createdLabels,
+    createdMilestones,
     commands,
   };
 }

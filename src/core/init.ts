@@ -99,7 +99,8 @@ function buildAgentSnippetBlock(): string {
   const body = [
     "## Vibe Agent Workflow (Managed)",
     "- Run `node dist/cli.cjs preflight` before implementation.",
-    "- Use one issue per topic and keep tracker labels/milestones updated.",
+    "- Use one issue per topic and keep tracker labels updated.",
+    "- Use semantic, repo-specific milestones (avoid fixed milestone catalogs).",
     "- Validate with `node dist/cli.cjs postflight` and apply updates with `node dist/cli.cjs postflight --apply`.",
   ].join("\n");
 

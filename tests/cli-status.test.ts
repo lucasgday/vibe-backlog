@@ -168,6 +168,50 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("none"))).toBe(true);
   });
 
+  it("prints read-only semantic milestone suggestions in preflight", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## main" };
+      }
+      if (args[0] === "issue" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 50,
+              title: "retry hardening",
+              state: "OPEN",
+              labels: [{ name: "module:billing" }],
+              milestone: null,
+              updatedAt: "2026-02-18T12:00:00Z",
+              url: "https://example.test/issues/50",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "preflight"]);
+
+    expect(logs.some((line) => line.includes("Milestone suggestions:"))).toBe(true);
+    expect(logs.some((line) => line.includes("#50 -> Billing: Retry Hardening"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && typeof args[0] === "string" && args[0] === "api",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps preflight non-blocking when security probe fails", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {

@@ -40,6 +40,9 @@ function createReconcileCliExecaMock(data: {
     }
 
     if (args[0] === "api") {
+      if (args[1] === "--method" && args[2] === "POST" && args[3] === `repos/${data.repo}/milestones`) {
+        return { stdout: JSON.stringify({ title: "created" }) };
+      }
       const endpoint = args[1] ?? "";
 
       if (data.failOn === "labels" && endpoint.startsWith(`repos/${data.repo}/labels?`)) {
@@ -131,14 +134,15 @@ describe.sequential("cli tracker bootstrap", () => {
     await program.parseAsync(["node", "vibe", "tracker", "bootstrap", "--dry-run"]);
 
     expect(execaMock).toHaveBeenCalledTimes(3);
-    expect(logs.some((line) => line.includes("$ gh api --method POST repos/acme/demo/milestones"))).toBe(true);
+    expect(logs.some((line) => line.includes("$ gh api --method POST repos/acme/demo/milestones"))).toBe(false);
     expect(logs.some((line) => line.includes("$ gh label create module:cli"))).toBe(true);
+    expect(logs.some((line) => line.includes("Milestones: repo-specific"))).toBe(true);
     expect(logs.some((line) => line.includes("tracker bootstrap: dry-run complete."))).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(false);
   });
 
-  it("creates missing tracker taxonomy and writes marker on apply", async () => {
+  it("creates missing tracker labels and writes marker on apply", async () => {
     const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
       if (args[0] === "repo" && args[1] === "view") {
         return { stdout: "acme/demo\n" };
@@ -172,7 +176,7 @@ describe.sequential("cli tracker bootstrap", () => {
           args[2] === "POST" &&
           args[3] === "repos/acme/demo/milestones",
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       commands.some(([cmd, args]) => cmd === "gh" && args[0] === "label" && args[1] === "create" && args[2] === "module:cli"),
     ).toBe(true);
@@ -402,7 +406,7 @@ describe.sequential("cli tracker reconcile", () => {
     expect(logs.some((line) => line.includes("tracker reconcile: DONE"))).toBe(true);
   });
 
-  it("degrades to plan-only in non-interactive mode when fallbacks are missing", async () => {
+  it("applies reconcile in non-interactive mode by generating milestones when needed", async () => {
     const logs: string[] = [];
     const execaMock = createReconcileCliExecaMock({
       repo: "acme/demo",
@@ -429,8 +433,18 @@ describe.sequential("cli tracker reconcile", () => {
     await program.parseAsync(["node", "vibe", "tracker", "reconcile"]);
 
     const commands = execaMock.mock.calls.map((call) => [call[0], call[1]] as [string, string[]]);
-    expect(commands.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit")).toBe(false);
-    expect(logs.some((line) => line.includes("plan-only mode"))).toBe(true);
+    expect(
+      commands.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          args[0] === "api" &&
+          args[1] === "--method" &&
+          args[2] === "POST" &&
+          args[3] === "repos/acme/demo/milestones",
+      ),
+    ).toBe(true);
+    expect(commands.some(([cmd, args]) => cmd === "gh" && args[0] === "issue" && args[1] === "edit")).toBe(true);
+    expect(logs.some((line) => line.includes("plan-only mode"))).toBe(false);
     expect(process.exitCode).toBeUndefined();
   });
 

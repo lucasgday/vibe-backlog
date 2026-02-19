@@ -68,7 +68,7 @@ describe.sequential("cli init", () => {
           args[2] === "POST" &&
           args[3] === "repos/acme/demo/milestones",
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       commands.some(([cmd, args]) => cmd === "gh" && args[0] === "label" && args[1] === "create" && args[2] === "module:cli"),
     ).toBe(true);

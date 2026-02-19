@@ -4,6 +4,7 @@ import { execa } from "execa";
 import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import { ensureRepositoryMilestone, suggestSemanticMilestoneForIssue } from "./tracker";
 
 type ExecaFn = typeof execa;
 
@@ -715,10 +716,27 @@ function selectModuleLabels(labels: Iterable<string>): string[] {
   return picked;
 }
 
-async function listSourceIssueModuleLabels(execaFn: ExecaFn, issueId: number): Promise<string[]> {
-  const viewed = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "labels"], { stdio: "pipe" });
-  const row = parseJsonObject(viewed.stdout, "gh issue view labels");
-  return selectModuleLabels(parseLabelNames(row.labels));
+async function fetchSourceIssueContext(execaFn: ExecaFn, issueId: number): Promise<{
+  moduleLabels: string[];
+  body: string | null;
+  milestone: string | null;
+}> {
+  const viewed = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "labels,body,milestone"], {
+    stdio: "pipe",
+  });
+  const row = parseJsonObject(viewed.stdout, "gh issue view");
+  const milestoneRaw = row.milestone;
+  const milestone =
+    typeof milestoneRaw === "object" &&
+    milestoneRaw !== null &&
+    typeof (milestoneRaw as Record<string, unknown>).title === "string"
+      ? String((milestoneRaw as Record<string, unknown>).title).trim() || null
+      : null;
+  return {
+    moduleLabels: selectModuleLabels(parseLabelNames(row.labels)),
+    body: parseNullableString(row.body),
+    milestone,
+  };
 }
 
 async function listRepositoryLabels(execaFn: ExecaFn): Promise<Set<string>> {
@@ -849,10 +867,46 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
   const repo = await resolveRepoNameWithOwner(execaFn);
 
   let sourceModuleLabels: string[] = [];
+  let sourceIssueBody: string | null = null;
+  let resolvedMilestoneTitle: string | null = milestoneTitle;
   try {
-    sourceModuleLabels = await listSourceIssueModuleLabels(execaFn, sourceIssueId);
+    const sourceContext = await fetchSourceIssueContext(execaFn, sourceIssueId);
+    sourceModuleLabels = sourceContext.moduleLabels;
+    sourceIssueBody = sourceContext.body;
+    if (!resolvedMilestoneTitle && sourceContext.milestone) {
+      resolvedMilestoneTitle = sourceContext.milestone;
+    }
   } catch {
     sourceModuleLabels = [];
+    sourceIssueBody = null;
+  }
+
+  if (!resolvedMilestoneTitle) {
+    try {
+      const milestoneSuggestion = await suggestSemanticMilestoneForIssue(
+        {
+          title: sourceIssueTitle,
+          body: sourceIssueBody ?? body,
+          labels: sourceModuleLabels,
+        },
+        { execaFn, repo },
+      );
+
+      if (milestoneSuggestion.milestoneTitle) {
+        if (milestoneSuggestion.requiresCreation) {
+          const ensured = await ensureRepositoryMilestone({
+            execaFn,
+            repo,
+            title: milestoneSuggestion.milestoneTitle,
+          });
+          resolvedMilestoneTitle = ensured.milestoneTitle;
+        } else {
+          resolvedMilestoneTitle = milestoneSuggestion.milestoneTitle;
+        }
+      }
+    } catch {
+      resolvedMilestoneTitle = null;
+    }
   }
 
   const requestedLabels: string[] = [label, ...FOLLOW_UP_OPTIONAL_LABELS, ...sourceModuleLabels];
@@ -879,7 +933,7 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
         title,
         body,
         labels: labelsToApply,
-        milestoneTitle,
+        milestoneTitle: resolvedMilestoneTitle,
       });
     } catch (error) {
       if (!labelsToApply.length || !isLikelyMissingLabelError(error)) {
@@ -891,7 +945,7 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
         title,
         body,
         labels: [],
-        milestoneTitle,
+        milestoneTitle: resolvedMilestoneTitle,
       });
     }
 
@@ -911,7 +965,7 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
       title,
       body,
       labels: labelsToApply,
-      milestoneTitle,
+      milestoneTitle: resolvedMilestoneTitle,
     });
   } catch (error) {
     if (!labelsToApply.length || !isLikelyMissingLabelError(error)) {
@@ -923,7 +977,7 @@ export async function createReviewFollowUpIssue(params: CreateFollowUpParams): P
       title,
       body,
       labels: [],
-      milestoneTitle,
+      milestoneTitle: resolvedMilestoneTitle,
     });
   }
 
