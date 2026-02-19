@@ -15,3 +15,15 @@ Coverage added:
 
 What remains untested:
 - Live GitHub API behavior under rate limiting; mocked command responses cover control flow only.
+
+## Run 2026-02-19T14:09:22.469Z
+- run_id: issue-71-pr-72-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Core behavior is tested, but one important multi-row PR scenario is not covered.
+
+### Findings
+- [P2] Missing test for multiple merged PR rows on same branch name (tests/branch-cleanup.test.ts:62)
