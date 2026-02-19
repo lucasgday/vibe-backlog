@@ -358,26 +358,52 @@ function toCanonicalFindingKey(finding: ReviewFinding): string | null {
   return `canonical:${normalizedFile}|${normalizedLine}|${normalizedTitle}`;
 }
 
-function buildCanonicalFindingKeyMap(findings: ReviewFinding[]): Map<string, string> {
-  const mapping = new Map<string, string>();
+function buildCanonicalFindingKeyMap(findings: ReviewFinding[]): Map<string, Set<string>> {
+  const mapping = new Map<string, Set<string>>();
   for (const finding of findings) {
     const canonicalKey = toCanonicalFindingKey(finding);
     if (!canonicalKey) continue;
-    if (!mapping.has(canonicalKey)) {
-      mapping.set(canonicalKey, toFindingKey(finding));
+    const primaryFindingKey = toFindingKey(finding);
+    const existing = mapping.get(canonicalKey);
+    if (existing) {
+      existing.add(primaryFindingKey);
+      continue;
     }
+    mapping.set(canonicalKey, new Set([primaryFindingKey]));
   }
   return mapping;
 }
 
 function mapLifecycleFindingKeyToCurrentFindingKey(
   lifecycleKey: string,
-  currentCanonicalFindingKeyMap: Map<string, string>,
-): string {
+  currentCanonicalFindingKeyMap: Map<string, Set<string>>,
+): string | null {
   if (!lifecycleKey.startsWith("canonical:")) {
     return lifecycleKey;
   }
-  return currentCanonicalFindingKeyMap.get(lifecycleKey) ?? lifecycleKey;
+  const matchingCurrentKeys = currentCanonicalFindingKeyMap.get(lifecycleKey);
+  if (!matchingCurrentKeys || matchingCurrentKeys.size === 0) {
+    return lifecycleKey;
+  }
+  if (matchingCurrentKeys.size === 1) {
+    const [singleMatch] = matchingCurrentKeys;
+    return singleMatch ?? lifecycleKey;
+  }
+  return null;
+}
+
+function mapLifecycleFindingKeys(
+  lifecycleKeys: string[],
+  currentCanonicalFindingKeyMap: Map<string, Set<string>>,
+): Set<string> {
+  const mapped = new Set<string>();
+  for (const lifecycleKey of lifecycleKeys) {
+    const mappedKey = mapLifecycleFindingKeyToCurrentFindingKey(lifecycleKey, currentCanonicalFindingKeyMap);
+    if (mappedKey) {
+      mapped.add(mappedKey);
+    }
+  }
+  return mapped;
 }
 
 function toFindingKeySet(findings: ReviewFinding[]): Set<string> {
@@ -830,15 +856,13 @@ export async function runReviewCommand(
       const currentUnresolvedFindingKeys = toFindingKeySet(unresolvedFindings);
       const currentResolvedFindingKeys = toFindingKeySet(resolvedFindings);
       const currentCanonicalFindingKeyMap = buildCanonicalFindingKeyMap(allFindings);
-      const lifecycleUnresolvedFindingKeys = new Set(
-        lifecycleTotals.unresolvedFindingKeys.map((findingKey) =>
-          mapLifecycleFindingKeyToCurrentFindingKey(findingKey, currentCanonicalFindingKeyMap),
-        ),
+      const lifecycleUnresolvedFindingKeys = mapLifecycleFindingKeys(
+        lifecycleTotals.unresolvedFindingKeys,
+        currentCanonicalFindingKeyMap,
       );
-      const lifecycleResolvedFindingKeys = new Set(
-        lifecycleTotals.resolvedFindingKeys.map((findingKey) =>
-          mapLifecycleFindingKeyToCurrentFindingKey(findingKey, currentCanonicalFindingKeyMap),
-        ),
+      const lifecycleResolvedFindingKeys = mapLifecycleFindingKeys(
+        lifecycleTotals.resolvedFindingKeys,
+        currentCanonicalFindingKeyMap,
       );
 
       const observedFindingKeys = new Set([

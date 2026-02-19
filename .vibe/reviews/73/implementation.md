@@ -71,3 +71,15 @@ Lifecycle union logic improved, but dedupe keys can still diverge for managed th
 
 ### Findings
 - [P1] Lifecycle/current dedupe breaks when managed thread has no fingerprint marker (src/core/review-threads.ts:531)
+
+## Run 2026-02-19T15:09:41.905Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found one correctness risk in the new canonical lifecycle/current-run key mapping.
+
+### Findings
+- [P2] Canonical lifecycle mapping can collapse distinct findings sharing file+line+title (src/core/review.ts:361)

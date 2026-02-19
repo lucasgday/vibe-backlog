@@ -71,3 +71,15 @@ Coverage is better for lifecycle union, but one key edge case remains untested.
 
 ### Findings
 - [P2] No regression test for connector-managed lifecycle thread without fingerprint (tests/cli-review.test.ts:617)
+
+## Run 2026-02-19T15:09:41.906Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage improved, but one regression gap remains around ambiguous canonical matches.
+
+### Findings
+- [P3] Missing regression test for canonical-key collision handling (tests/cli-review.test.ts:708)
