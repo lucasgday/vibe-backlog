@@ -22,6 +22,7 @@ import {
   type FollowUpIssue,
 } from "./review-pr";
 import { appendReviewSummaryToPostflight } from "./review-postflight";
+import { resolveReviewThreads, type ReviewThreadsResolveResult } from "./review-threads";
 import { ensureIssueReviewTemplates, getIssueReviewDirectory } from "./reviews";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
@@ -73,6 +74,7 @@ export type ReviewCommandResult = {
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
   terminationReason: ReviewTerminationReason;
   rationaleAutofilled: boolean;
+  threadResolution: ReviewThreadsResolveResult | null;
 };
 
 type ReviewRunContext = {
@@ -646,6 +648,27 @@ export async function runReviewCommand(
     });
   }
 
+  let threadResolution: ReviewThreadsResolveResult | null = null;
+  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    threadResolution = await resolveReviewThreads(
+      {
+        prNumber: pr.number,
+        threadIds: [],
+        allUnresolved: true,
+        bodyOverride: null,
+        dryRun: false,
+        vibeManagedOnly: true,
+      },
+      execaFn,
+    );
+
+    if (threadResolution.failed > 0) {
+      throw new Error(
+        `review: auto-resolve failed for ${threadResolution.failed} thread(s) on PR #${pr.number} (replied=${threadResolution.replied} resolved=${threadResolution.resolved}).`,
+      );
+    }
+  }
+
   const exitCode = unresolvedFindings.length > 0 && options.strict ? REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE : 0;
 
   return {
@@ -667,5 +690,6 @@ export async function runReviewCommand(
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
     rationaleAutofilled: pr.rationaleAutofilled,
+    threadResolution,
   };
 }

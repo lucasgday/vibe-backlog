@@ -304,6 +304,25 @@ describe.sequential("cli review", () => {
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/55/comments?per_page=100&page=1") {
         return { stdout: "[]" };
       }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
+      }
       return { stdout: "" };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -316,6 +335,16 @@ describe.sequential("cli review", () => {
     expect(
       execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",
+      ),
+    ).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          Array.isArray(args) &&
+          args[0] === "api" &&
+          args[1] === "graphql" &&
+          args.some((entry) => String(entry).includes("reviewThreads(first:100")),
       ),
     ).toBe(true);
   });
@@ -691,6 +720,25 @@ describe.sequential("cli review", () => {
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
         return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
       }
       if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: finalHead }) };
       return { stdout: "" };

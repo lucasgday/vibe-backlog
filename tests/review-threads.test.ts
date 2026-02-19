@@ -100,6 +100,46 @@ describe("review threads resolve core", () => {
     ).toBe(false);
   });
 
+  it("filters unresolved selection to vibe-managed threads when requested", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "abcdef1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({ id: "PRRT_vibe", isResolved: false }),
+              buildThreadPayload({
+                id: "PRRT_human",
+                isResolved: false,
+                body: "**Nit**\n\nCan we rename this variable?",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await resolveReviewThreads(
+      {
+        prNumber: 51,
+        threadIds: [],
+        allUnresolved: true,
+        bodyOverride: null,
+        dryRun: true,
+        vibeManagedOnly: true,
+      },
+      execaMock as never,
+    );
+
+    expect(result.totalThreads).toBe(2);
+    expect(result.selectedThreads).toBe(1);
+    expect(result.planned).toBe(1);
+    expect(result.items[0]?.threadId).toBe("PRRT_vibe");
+  });
+
   it("replies and resolves a single thread using override body", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/dedupe\n" };

@@ -1745,6 +1745,11 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (result.committed) {
           console.log("review: committed and pushed autofix changes.");
         }
+        if (result.threadResolution) {
+          console.log(
+            `review: threads selected=${result.threadResolution.selectedThreads} resolved=${result.threadResolution.resolved} failed=${result.threadResolution.failed}`,
+          );
+        }
 
         console.log("\n" + result.summary);
 

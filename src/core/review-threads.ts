@@ -55,6 +55,7 @@ export type ReviewThreadsResolveOptions = {
   allUnresolved: boolean;
   bodyOverride: string | null;
   dryRun: boolean;
+  vibeManagedOnly?: boolean;
 };
 
 export type ReviewThreadTargetMode = "thread-id" | "all-unresolved";
@@ -302,6 +303,10 @@ function extractFingerprint(body: string | null): string | null {
   return match ? String(match[1]).trim().toLowerCase() : null;
 }
 
+function isVibeManagedThread(thread: ReviewThread): boolean {
+  return thread.comments.some((comment) => extractFingerprint(comment.body) !== null);
+}
+
 function extractPass(body: string | null): string | null {
   if (!body) return null;
   const match = /\bPass:\s*`([^`]+)`/i.exec(body);
@@ -438,9 +443,16 @@ async function resolveThread(execaFn: ExecaFn, threadId: string): Promise<boolea
   return Boolean(thread?.isResolved);
 }
 
-function selectThreads(allThreads: ReviewThread[], threadIds: string[], allUnresolved: boolean): ReviewThread[] {
+function selectThreads(
+  allThreads: ReviewThread[],
+  threadIds: string[],
+  allUnresolved: boolean,
+  vibeManagedOnly: boolean,
+): ReviewThread[] {
   if (allUnresolved) {
-    return allThreads.filter((thread) => !thread.isResolved);
+    const unresolved = allThreads.filter((thread) => !thread.isResolved);
+    if (!vibeManagedOnly) return unresolved;
+    return unresolved.filter((thread) => isVibeManagedThread(thread));
   }
 
   const byId = new Map<string, ReviewThread>();
@@ -467,6 +479,7 @@ export async function resolveReviewThreads(
 ): Promise<ReviewThreadsResolveResult> {
   const threadIds = normalizeThreadIds(options.threadIds);
   const targetMode: ReviewThreadTargetMode = options.allUnresolved ? "all-unresolved" : "thread-id";
+  const vibeManagedOnly = Boolean(options.vibeManagedOnly);
 
   let branch: string | null = null;
   let prNumber = options.prNumber;
@@ -480,7 +493,7 @@ export async function resolveReviewThreads(
   const headSha = await resolvePullRequestHeadSha(execaFn, prNumber);
   const allThreads = await listPullRequestReviewThreads(execaFn, owner, repo, prNumber);
 
-  const selected = selectThreads(allThreads, threadIds, options.allUnresolved);
+  const selected = selectThreads(allThreads, threadIds, options.allUnresolved, vibeManagedOnly);
   const missing = options.allUnresolved ? [] : missingThreadIds(allThreads, threadIds);
 
   const items: ReviewThreadResolveItem[] = [];
