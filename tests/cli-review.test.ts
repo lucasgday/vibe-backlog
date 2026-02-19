@@ -526,6 +526,121 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Validate user input"))).toBe(true);
   });
 
+  it("auto-closes open follow-up issues when unresolved findings reach zero", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-close-followup", findingsCount: 0 }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 801,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\nopen follow-up",
+              html_url: "https://example.test/issues/801",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close" && args[2] === "801") return { stdout: "" };
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "5", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "close" && args[2] === "801",
+      ),
+    ).toBe(true);
+    expect(logs.some((line) => line.includes("### Follow-up Closure"))).toBe(true);
+    expect(logs.some((line) => line.includes("- Closed follow-ups: #801"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("continues review and reports warning when follow-up auto-close fails", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const logs: string[] = [];
+    let closeAttempts = 0;
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-close-warning", findingsCount: 0 }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 802,
+              body: "<!-- vibe:review-followup:source-issue:34 -->\nopen follow-up",
+              html_url: "https://example.test/issues/802",
+            },
+          ]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "close" && args[2] === "802") {
+        closeAttempts += 1;
+        const error = new Error("temporary timeout");
+        (error as Error & { stderr?: string }).stderr = "timeout while contacting api.github.com";
+        throw error;
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "5", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(closeAttempts).toBe(3);
+    expect(logs.some((line) => line.includes("### Follow-up Closure Warnings"))).toBe(true);
+    expect(logs.some((line) => line.includes("follow-up auto-close failed for #802"))).toBe(true);
+  });
+
   it("creates follow-up issue with all unresolved findings across passes", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
