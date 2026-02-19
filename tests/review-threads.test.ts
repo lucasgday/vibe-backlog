@@ -9,6 +9,16 @@ function buildThreadPayload(params: {
   body?: string;
   path?: string;
   line?: number;
+  authorLogin?: string;
+  extraComments?: Array<{
+    id: string;
+    body: string;
+    url: string;
+    path: string;
+    line: number;
+    originalLine: number;
+    authorLogin: string;
+  }>;
 }): Record<string, unknown> {
   return {
     id: params.id,
@@ -25,8 +35,17 @@ function buildThreadPayload(params: {
           path: params.path ?? "src/cli-program.ts",
           line: params.line ?? 42,
           originalLine: params.line ?? 42,
-          author: { login: "review-bot" },
+          author: { login: params.authorLogin ?? "review-bot" },
         },
+        ...((params.extraComments ?? []).map((comment) => ({
+          id: comment.id,
+          body: comment.body,
+          url: comment.url,
+          path: comment.path,
+          line: comment.line,
+          originalLine: comment.originalLine,
+          author: { login: comment.authorLogin },
+        })) as Array<Record<string, unknown>>),
       ],
     },
   };
@@ -198,6 +217,53 @@ describe("review threads resolve core", () => {
     expect(result.totalThreads).toBe(1);
     expect(result.selectedThreads).toBe(0);
     expect(result.planned).toBe(0);
+  });
+
+  it("selects connector-authored unresolved threads when vibeManagedOnly is enabled", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "abcdef1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_connector",
+                isResolved: false,
+                authorLogin: "chatgpt-codex-connector",
+                body:
+                  "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Keep non-growth findings in follow-up issue payload**",
+              }),
+              buildThreadPayload({
+                id: "PRRT_other",
+                isResolved: false,
+                authorLogin: "human-reviewer",
+                body: "**Nit**\n\nCan we rename this variable?",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await resolveReviewThreads(
+      {
+        prNumber: 51,
+        threadIds: [],
+        allUnresolved: true,
+        bodyOverride: null,
+        dryRun: true,
+        vibeManagedOnly: true,
+      },
+      execaMock as never,
+    );
+
+    expect(result.totalThreads).toBe(2);
+    expect(result.selectedThreads).toBe(1);
+    expect(result.planned).toBe(1);
+    expect(result.items[0]?.threadId).toBe("PRRT_connector");
   });
 
   it("replies and resolves a single thread using override body", async () => {
