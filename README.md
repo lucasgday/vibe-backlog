@@ -200,6 +200,8 @@ Policy:
   - merged into base -> `git branch -d`
   - patch-equivalent -> `git branch -D`
   - merged PR with matching head SHA -> `git branch -D` (safe `pr-merged` path)
+- If multiple merged PR rows exist for the same branch name, cleanup matches any row whose `headRefOid` equals local branch HEAD.
+- GitHub PR lookup is retried with timeout; on persistent lookup failure, cleanup warns and keeps branch in guarded non-merged flow.
 - non-merged -> skipped unless `--force-unmerged --yes`
 
 ## `vibe security scan` command reference

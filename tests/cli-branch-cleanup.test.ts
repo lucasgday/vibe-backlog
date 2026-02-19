@@ -55,6 +55,9 @@ describe.sequential("cli branch cleanup", () => {
     expect(logs.some((line) => line.includes("branch cleanup summary: detected=1 deleted=0 planned=1 skipped=0 errors=0"))).toBe(
       true,
     );
+    expect(logs.some((line) => line.includes("branch cleanup pr-merged: detected=0 deleted=0 planned=0 skipped=0 errors=0"))).toBe(
+      true,
+    );
     expect(
       execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "branch" && (args[1] === "-d" || args[1] === "-D"),
@@ -109,5 +112,8 @@ describe.sequential("cli branch cleanup", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("feature/pr-merged | pr-merged | planned"))).toBe(true);
     expect(logs.some((line) => line.includes("branch cleanup summary: detected=1 deleted=0 planned=1 skipped=0 errors=0"))).toBe(true);
+    expect(logs.some((line) => line.includes("branch cleanup pr-merged: detected=1 deleted=0 planned=1 skipped=0 errors=0"))).toBe(
+      true,
+    );
   });
 });

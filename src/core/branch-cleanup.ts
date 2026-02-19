@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { runGhWithRetry } from "./gh-retry";
 
 type ExecaFn = typeof execa;
 
@@ -23,6 +24,13 @@ export type BranchCleanupOptions = {
   fetchPrune?: boolean;
 };
 
+export type BranchCleanupOutcomeCounts = {
+  planned: number;
+  deleted: number;
+  skipped: number;
+  error: number;
+};
+
 export type BranchCleanupResult = {
   dryRun: boolean;
   fetchPrune: boolean;
@@ -38,6 +46,7 @@ export type BranchCleanupResult = {
   warnings: string[];
   candidates: BranchCleanupCandidate[];
   nonMergedBlocked: string[];
+  prMergedOutcomes: BranchCleanupOutcomeCounts;
 };
 
 type BranchRefSnapshot = {
@@ -55,19 +64,15 @@ type GitCommandResult = {
 type MergedPullRequestSnapshot = {
   number: number;
   headRefOid: string | null;
+  mergedAt: string | null;
 };
+
+const GH_PR_LIST_TIMEOUT_MS = 8_000;
+const GH_PR_LIST_RETRY_BACKOFF_MS = [0, 0, 0] as const;
+const GH_PR_LIST_ATTEMPTS = GH_PR_LIST_RETRY_BACKOFF_MS.length;
 
 async function runGitCommand(execaFn: ExecaFn, args: string[]): Promise<GitCommandResult> {
   const result = await execaFn("git", args, { stdio: "pipe", reject: false });
-  return {
-    stdout: typeof result.stdout === "string" ? result.stdout : "",
-    stderr: typeof result.stderr === "string" ? result.stderr : "",
-    exitCode: typeof result.exitCode === "number" ? result.exitCode : 0,
-  };
-}
-
-async function runGhCommand(execaFn: ExecaFn, args: string[]): Promise<GitCommandResult> {
-  const result = await execaFn("gh", args, { stdio: "pipe", reject: false });
   return {
     stdout: typeof result.stdout === "string" ? result.stdout : "",
     stderr: typeof result.stderr === "string" ? result.stderr : "",
@@ -218,35 +223,71 @@ function parseMergedPullRequestRows(stdout: string): MergedPullRequestSnapshot[]
     const number = typeof record.number === "number" && Number.isInteger(record.number) && record.number > 0 ? record.number : null;
     if (!number) continue;
     const headRaw = typeof record.headRefOid === "string" ? record.headRefOid.trim() : "";
+    const mergedAtRaw = typeof record.mergedAt === "string" ? record.mergedAt.trim() : "";
     rows.push({
       number,
       headRefOid: normalizeSha(headRaw),
+      mergedAt: mergedAtRaw || null,
     });
   }
 
   return rows;
 }
 
-async function findMergedPullRequestForBranch(execaFn: ExecaFn, branch: string): Promise<MergedPullRequestSnapshot | null> {
-  const listed = await runGhCommand(execaFn, [
-    "pr",
-    "list",
-    "--head",
-    branch,
-    "--state",
-    "merged",
-    "--limit",
-    "20",
-    "--json",
-    "number,headRefOid,mergedAt",
-  ]);
+function toMergedAtTimestamp(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function selectMostRecentlyMergedPullRequest(rows: MergedPullRequestSnapshot[]): MergedPullRequestSnapshot | null {
+  if (!rows.length) return null;
+  return [...rows].sort((left, right) => {
+    const mergedAtDelta = toMergedAtTimestamp(right.mergedAt) - toMergedAtTimestamp(left.mergedAt);
+    if (mergedAtDelta !== 0) return mergedAtDelta;
+    return right.number - left.number;
+  })[0] ?? null;
+}
+
+async function listMergedPullRequestsForBranch(execaFn: ExecaFn, branch: string): Promise<MergedPullRequestSnapshot[]> {
+  const listed = await runGhWithRetry(
+    execaFn,
+    [
+      "pr",
+      "list",
+      "--head",
+      branch,
+      "--state",
+      "merged",
+      "--limit",
+      "20",
+      "--json",
+      "number,headRefOid,mergedAt",
+    ],
+    { stdio: "pipe", timeout: GH_PR_LIST_TIMEOUT_MS },
+    {
+      attempts: GH_PR_LIST_ATTEMPTS,
+      backoffMs: Array.from(GH_PR_LIST_RETRY_BACKOFF_MS),
+      idempotent: true,
+    },
+  );
+
   if (listed.exitCode !== 0) {
     const detail = listed.stderr.trim() || listed.stdout.trim() || "unknown gh error";
     throw new Error(`gh pr list failed (${detail})`);
   }
 
-  const rows = parseMergedPullRequestRows(listed.stdout);
-  return rows[0] ?? null;
+  return parseMergedPullRequestRows(listed.stdout);
+}
+
+function countOutcomesForCategory(candidates: BranchCleanupCandidate[], category: BranchCleanupCategory): BranchCleanupOutcomeCounts {
+  return {
+    planned: candidates.filter((candidate) => candidate.category === category && candidate.status === "planned").length,
+    deleted: candidates.filter((candidate) => candidate.category === category && candidate.status === "deleted").length,
+    skipped: candidates.filter((candidate) => candidate.category === category && candidate.status === "skipped").length,
+    error: candidates.filter((candidate) => candidate.category === category && candidate.status === "error").length,
+  };
 }
 
 function resolveProtectedBranches(currentBranch: string, baseRef: string): string[] {
@@ -333,16 +374,20 @@ export async function runBranchCleanup(
     let deleteFlag: "-d" | "-D" | null = null;
     if (category === "non-merged" && !forceUnmerged) {
       try {
-        const mergedPr = await findMergedPullRequestForBranch(execaFn, snapshot.branch);
-        if (mergedPr) {
+        const mergedPrs = await listMergedPullRequestsForBranch(execaFn, snapshot.branch);
+        if (mergedPrs.length) {
           const localHeadSha = await resolveBranchHeadSha(execaFn, snapshot.branch);
-          const mergedPrHeadSha = normalizeSha(mergedPr.headRefOid);
-          if (mergedPrHeadSha && localHeadSha === mergedPrHeadSha) {
+          const matchedPr = mergedPrs.find((pr) => pr.headRefOid === localHeadSha);
+          if (matchedPr) {
             category = "pr-merged";
           } else {
-            const reason = mergedPrHeadSha
-              ? `merged PR #${mergedPr.number} head mismatch (local ${localHeadSha.slice(0, 12)} != PR ${mergedPrHeadSha.slice(0, 12)})`
-              : `merged PR #${mergedPr.number} did not expose head sha`;
+            const selectedPr = selectMostRecentlyMergedPullRequest(mergedPrs);
+            const mergedPrHeadSha = selectedPr?.headRefOid ?? null;
+            const reason = mergedPrHeadSha && selectedPr
+              ? `merged PR #${selectedPr.number} head mismatch (local ${localHeadSha.slice(0, 12)} != PR ${mergedPrHeadSha.slice(0, 12)})`
+              : selectedPr
+                ? `merged PR #${selectedPr.number} did not expose head sha`
+                : "merged PR lookup returned rows but none were usable";
             nonMergedBlocked.push(snapshot.branch);
             candidates.push({
               branch: snapshot.branch,
@@ -462,6 +507,7 @@ export async function runBranchCleanup(
   const planned = candidates.filter((candidate) => candidate.status === "planned").length;
   const deleted = candidates.filter((candidate) => candidate.status === "deleted").length;
   const skipped = candidates.filter((candidate) => candidate.status === "skipped").length + protectedSkipped.length;
+  const prMergedOutcomes = countOutcomesForCategory(candidates, "pr-merged");
 
   return {
     dryRun,
@@ -478,5 +524,6 @@ export async function runBranchCleanup(
     warnings,
     candidates,
     nonMergedBlocked: nonMergedBlocked.sort((left, right) => left.localeCompare(right)),
+    prMergedOutcomes,
   };
 }
