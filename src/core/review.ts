@@ -22,6 +22,7 @@ import {
   type FollowUpIssue,
 } from "./review-pr";
 import { appendReviewSummaryToPostflight } from "./review-postflight";
+import { resolveReviewThreads, type ReviewThreadsResolveResult } from "./review-threads";
 import { ensureIssueReviewTemplates, getIssueReviewDirectory } from "./reviews";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
@@ -73,6 +74,8 @@ export type ReviewCommandResult = {
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
   terminationReason: ReviewTerminationReason;
   rationaleAutofilled: boolean;
+  threadResolution: ReviewThreadsResolveResult | null;
+  threadResolutionWarning: string | null;
 };
 
 type ReviewRunContext = {
@@ -646,6 +649,31 @@ export async function runReviewCommand(
     });
   }
 
+  let threadResolution: ReviewThreadsResolveResult | null = null;
+  let threadResolutionWarning: string | null = null;
+  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    try {
+      threadResolution = await resolveReviewThreads(
+        {
+          prNumber: pr.number,
+          threadIds: [],
+          allUnresolved: true,
+          bodyOverride: null,
+          dryRun: false,
+          vibeManagedOnly: true,
+        },
+        execaFn,
+      );
+
+      if (threadResolution.failed > 0) {
+        threadResolutionWarning = `review: thread auto-resolve warning selected=${threadResolution.selectedThreads} resolved=${threadResolution.resolved} failed=${threadResolution.failed}.`;
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : String(error);
+      threadResolutionWarning = `review: thread auto-resolve warning ${message}`;
+    }
+  }
+
   const exitCode = unresolvedFindings.length > 0 && options.strict ? REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE : 0;
 
   return {
@@ -667,5 +695,7 @@ export async function runReviewCommand(
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
     rationaleAutofilled: pr.rationaleAutofilled,
+    threadResolution,
+    threadResolutionWarning,
   };
 }

@@ -696,6 +696,25 @@ describe.sequential("cli pr open", () => {
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/61/comments?per_page=100&page=1") {
         return { stdout: "[]" };
       }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
+      }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
     });
 
@@ -801,6 +820,25 @@ describe.sequential("cli pr open", () => {
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/61/comments?per_page=100&page=1") {
         return { stdout: "[]" };
       }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
+      }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
     });
 
@@ -889,6 +927,25 @@ describe.sequential("cli pr open", () => {
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/61/comments?per_page=100&page=1") {
         return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
     });
