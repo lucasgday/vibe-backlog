@@ -285,6 +285,7 @@ If issue resolution still fails, command exits with remediation to provide `--is
 Follow-up issue behavior:
 
 - Unresolved findings after final attempt (`max-attempts`) create/update a single follow-up issue.
+- All issue creation flows in `vibe` use `gh issue create --body-file` (never inline `--body`) to preserve markdown formatting.
 - Non-dry-run with unresolved findings `0` attempts to auto-close open follow-up issues for the same source marker.
 - Auto-close failures are emitted in the review summary warnings and do not abort `vibe review`.
 - Review prompt treats `.vibe/reviews/<issue>/*.md` and `.vibe/artifacts/postflight.json` as expected generated artifacts (not unplanned changes by themselves).
