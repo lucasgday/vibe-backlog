@@ -17,3 +17,15 @@ Detected one behavioral regression risk in the new `pr-merged` decision path for
 
 ### Findings
 - [P2] Merged PR selection is order-dependent and can skip valid auto-cleanup (src/core/branch-cleanup.ts:248)
+
+## Run 2026-02-19T14:17:10.431Z
+- run_id: issue-71-pr-72-attempt-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Reviewed the branch cleanup diff in src/core/branch-cleanup.ts and related CLI/reporting changes; merged-PR matching now checks all rows by head SHA, retry+timeout controls are explicit, and no functional regressions were identified in the modified paths.
+
+### Findings
+- none
