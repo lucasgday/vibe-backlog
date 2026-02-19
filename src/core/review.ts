@@ -584,7 +584,7 @@ export async function runReviewCommand(
     terminationReason,
   });
 
-  if (unresolvedFindings.length > 0) {
+  if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
     followUp = await createReviewFollowUpIssue({
       execaFn,
       sourceIssueId: context.issueId,

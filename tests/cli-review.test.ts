@@ -464,7 +464,7 @@ describe.sequential("cli review", () => {
     ).toBe(true);
   });
 
-  it("stops after first unresolved attempt when autofix is not applied and creates follow-up", async () => {
+  it("stops after first unresolved attempt when autofix is not applied without creating follow-up", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
       issue_id: 34,
@@ -497,7 +497,6 @@ describe.sequential("cli review", () => {
           }),
         };
       }
-      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") return { stdout: "https://example.test/issues/210\n" };
       return { stdout: "" };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -516,7 +515,7 @@ describe.sequential("cli review", () => {
       execaMock.mock.calls.some(
         ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "create",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("stops early when autofix reports no changed files", async () => {
@@ -552,7 +551,6 @@ describe.sequential("cli review", () => {
           }),
         };
       }
-      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") return { stdout: "https://example.test/issues/211\n" };
       return { stdout: "" };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -567,6 +565,11 @@ describe.sequential("cli review", () => {
     expect(agentRuns).toBe(1);
     expect(logs.some((line) => line.includes("review: termination=no-autofix-changes"))).toBe(true);
     expect(logs.some((line) => line.includes("Termination: early-stop (reason=no-autofix-changes)"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "create",
+      ),
+    ).toBe(false);
   });
 
   it("stops on same finding fingerprints across attempts", async () => {
@@ -601,7 +604,6 @@ describe.sequential("cli review", () => {
           }),
         };
       }
-      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") return { stdout: "https://example.test/issues/212\n" };
       return { stdout: "" };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -616,6 +618,11 @@ describe.sequential("cli review", () => {
     expect(agentRuns).toBe(2);
     expect(logs.some((line) => line.includes("review: termination=same-fingerprints"))).toBe(true);
     expect(logs.some((line) => line.includes("Termination: early-stop (reason=same-fingerprints)"))).toBe(true);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "create",
+      ),
+    ).toBe(false);
   });
 
   it("keeps exit 0 when unresolved remain and strict mode is disabled", async () => {
