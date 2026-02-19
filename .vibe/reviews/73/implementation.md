@@ -47,3 +47,15 @@ Lifecycle totals merge undercounts findings when current-run and PR-thread lifec
 
 ### Findings
 - [P1] Lifecycle totals use max() instead of union, producing incorrect summary counts (src/core/review.ts:782)
+
+## Run 2026-02-19T14:49:45.232Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Lifecycle totals integration is mostly correct, but key normalization still breaks dedupe for connector-managed threads without fingerprint markers.
+
+### Findings
+- [P1] Lifecycle/current finding keys are incompatible when thread fingerprint is missing (src/core/review-threads.ts:531)

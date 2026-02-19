@@ -47,3 +47,15 @@ Coverage misses a mixed-source lifecycle/current-run scenario that would catch c
 
 ### Findings
 - [P2] No regression test for mixed lifecycle + current-run totals (tests/cli-review.test.ts:529)
+
+## Run 2026-02-19T14:49:45.234Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Test coverage improved for lifecycle totals and union behavior, but a key regression case is still untested.
+
+### Findings
+- [P2] Missing regression test for connector-managed thread without fingerprint marker (tests/cli-review.test.ts:617)

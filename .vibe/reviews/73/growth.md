@@ -47,3 +47,15 @@ No growth-specific opportunities were introduced by this infrastructure/reportin
 
 ### Findings
 - none
+
+## Run 2026-02-19T14:49:45.235Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Reporting changed in a direction that improves trust, but measurement remains mostly textual.
+
+### Findings
+- [P3] Lifecycle totals source/warning is not emitted as structured signal (src/core/review.ts:422)
