@@ -120,6 +120,9 @@ describe("review threads resolve core", () => {
         P2: 1,
         P3: 0,
       },
+      unresolvedSeverityByFindingKey: {
+        "fingerprint:abc123def456": "P2",
+      },
       unresolvedFindingKeys: ["fingerprint:abc123def456"],
       resolvedFindingKeys: ["fingerprint:def456abc123"],
     });
@@ -178,6 +181,9 @@ describe("review threads resolve core", () => {
         P1: 1,
         P2: 0,
         P3: 0,
+      },
+      unresolvedSeverityByFindingKey: {
+        "canonical:src/core/review.ts|531|keep non-growth findings in follow-up issue payload": "P1",
       },
       unresolvedFindingKeys: ["canonical:src/core/review.ts|531|keep non-growth findings in follow-up issue payload"],
       resolvedFindingKeys: ["fingerprint:def456abc123"],

@@ -392,13 +392,23 @@ function mapLifecycleFindingKeyToCurrentFindingKey(
   return null;
 }
 
+function mapLifecycleFindingEntries(
+  lifecycleKeys: string[],
+  currentCanonicalFindingKeyMap: Map<string, Set<string>>,
+): Array<{ originalKey: string; mappedKey: string | null }> {
+  return lifecycleKeys.map((lifecycleKey) => ({
+    originalKey: lifecycleKey,
+    mappedKey: mapLifecycleFindingKeyToCurrentFindingKey(lifecycleKey, currentCanonicalFindingKeyMap),
+  }));
+}
+
 function mapLifecycleFindingKeys(
   lifecycleKeys: string[],
   currentCanonicalFindingKeyMap: Map<string, Set<string>>,
 ): Set<string> {
   const mapped = new Set<string>();
-  for (const lifecycleKey of lifecycleKeys) {
-    const mappedKey = mapLifecycleFindingKeyToCurrentFindingKey(lifecycleKey, currentCanonicalFindingKeyMap);
+  for (const entry of mapLifecycleFindingEntries(lifecycleKeys, currentCanonicalFindingKeyMap)) {
+    const mappedKey = entry.mappedKey;
     if (mappedKey) {
       mapped.add(mappedKey);
     }
@@ -856,9 +866,14 @@ export async function runReviewCommand(
       const currentUnresolvedFindingKeys = toFindingKeySet(unresolvedFindings);
       const currentResolvedFindingKeys = toFindingKeySet(resolvedFindings);
       const currentCanonicalFindingKeyMap = buildCanonicalFindingKeyMap(allFindings);
-      const lifecycleUnresolvedFindingKeys = mapLifecycleFindingKeys(
+      const lifecycleUnresolvedEntries = mapLifecycleFindingEntries(
         lifecycleTotals.unresolvedFindingKeys,
         currentCanonicalFindingKeyMap,
+      );
+      const lifecycleUnresolvedFindingKeys = new Set(
+        lifecycleUnresolvedEntries
+          .map((entry) => entry.mappedKey)
+          .filter((mappedKey): mappedKey is string => Boolean(mappedKey)),
       );
       const lifecycleResolvedFindingKeys = mapLifecycleFindingKeys(
         lifecycleTotals.resolvedFindingKeys,
@@ -887,11 +902,15 @@ export async function runReviewCommand(
         warning: null,
       };
 
-      const mergedSeverityTotals: SeverityCounts = { ...lifecycleTotals.unresolvedSeverity };
-      for (const finding of unresolvedFindings) {
-        const findingKey = toFindingKey(finding);
-        if (lifecycleUnresolvedFindingKeys.has(findingKey)) continue;
-        mergedSeverityTotals[finding.severity] += 1;
+      const mergedSeverityTotals: SeverityCounts = { ...currentRunSeverityTotals };
+      for (const lifecycleEntry of lifecycleUnresolvedEntries) {
+        const mappedKey = lifecycleEntry.mappedKey;
+        if (!mappedKey) continue;
+        if (currentUnresolvedFindingKeys.has(mappedKey)) continue;
+        const lifecycleSeverity = lifecycleTotals.unresolvedSeverityByFindingKey[lifecycleEntry.originalKey];
+        if (lifecycleSeverity) {
+          mergedSeverityTotals[lifecycleSeverity] += 1;
+        }
       }
       severityTotals = mergedSeverityTotals;
     } catch (error) {

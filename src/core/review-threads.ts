@@ -96,6 +96,7 @@ export type ReviewThreadLifecycleTotals = {
   unresolved: number;
   resolved: number;
   unresolvedSeverity: Record<"P0" | "P1" | "P2" | "P3", number>;
+  unresolvedSeverityByFindingKey: Record<string, "P0" | "P1" | "P2" | "P3">;
   unresolvedFindingKeys: string[];
   resolvedFindingKeys: string[];
 };
@@ -594,6 +595,7 @@ export async function summarizeReviewThreadLifecycleTotals(
   let unresolved = 0;
   let resolved = 0;
   const unresolvedSeverity = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  const unresolvedSeverityByFindingKey: Record<string, "P0" | "P1" | "P2" | "P3"> = {};
   const unresolvedFindingKeys: string[] = [];
   const resolvedFindingKeys: string[] = [];
   for (const [findingKey, status] of statusByFindingKey.entries()) {
@@ -602,6 +604,7 @@ export async function summarizeReviewThreadLifecycleTotals(
       unresolvedFindingKeys.push(findingKey);
       if (status.severity) {
         unresolvedSeverity[status.severity] += 1;
+        unresolvedSeverityByFindingKey[findingKey] = status.severity;
       }
     } else if (status.resolved) {
       resolved += 1;
@@ -614,6 +617,7 @@ export async function summarizeReviewThreadLifecycleTotals(
     unresolved,
     resolved,
     unresolvedSeverity,
+    unresolvedSeverityByFindingKey,
     unresolvedFindingKeys: unresolvedFindingKeys.sort(),
     resolvedFindingKeys: resolvedFindingKeys.sort(),
   };

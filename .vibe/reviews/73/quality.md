@@ -83,3 +83,15 @@ Coverage improved, but one regression gap remains around ambiguous canonical mat
 
 ### Findings
 - [P3] Missing regression test for canonical-key collision handling (tests/cli-review.test.ts:708)
+
+## Run 2026-02-19T15:13:42.019Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner-3
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage is strong, but one assertion gap leaves the severity drift defect unguarded.
+
+### Findings
+- [P3] Ambiguous-canonical regression test does not assert severity consistency (tests/cli-review.test.ts:912)

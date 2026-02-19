@@ -83,3 +83,15 @@ Found one correctness risk in the new canonical lifecycle/current-run key mappin
 
 ### Findings
 - [P2] Canonical lifecycle mapping can collapse distinct findings sharing file+line+title (src/core/review.ts:361)
+
+## Run 2026-02-19T15:13:42.017Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner-3
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found one lifecycle summary consistency defect.
+
+### Findings
+- [P2] Severity totals can drift from unresolved totals when canonical lifecycle keys are dropped (src/core/review.ts:890)

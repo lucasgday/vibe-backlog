@@ -912,6 +912,7 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Findings observed: 2"))).toBe(true);
     expect(logs.some((line) => line.includes("Unresolved findings: 2"))).toBe(true);
     expect(logs.some((line) => line.includes("Resolved findings: 0"))).toBe(true);
+    expect(logs.some((line) => line.includes("Severity: P0=0, P1=0, P2=2, P3=0"))).toBe(true);
   });
 
   it("emits structured findings totals warning when lifecycle totals are unavailable", async () => {
