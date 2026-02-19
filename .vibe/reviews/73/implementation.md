@@ -35,3 +35,15 @@ Reviewed lifecycle severity alignment updates in review summary aggregation and 
 
 ### Findings
 - none
+
+## Run 2026-02-19T14:45:10.929Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Lifecycle totals merge undercounts findings when current-run and PR-thread lifecycle sets are disjoint.
+
+### Findings
+- [P1] Lifecycle totals use max() instead of union, producing incorrect summary counts (src/core/review.ts:782)

@@ -35,3 +35,15 @@ Targeted tests for lifecycle severity totals were added and existing review comm
 
 ### Findings
 - none
+
+## Run 2026-02-19T14:45:10.930Z
+- run_id: issue-73-pr-74-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Coverage misses a mixed-source lifecycle/current-run scenario that would catch counter regressions.
+
+### Findings
+- [P2] No regression test for mixed lifecycle + current-run totals (tests/cli-review.test.ts:529)
