@@ -35,3 +35,15 @@ Test coverage was updated to validate growth-focused follow-up behavior and incl
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:28:35.289Z
+- run_id: issue-68-attempt-3-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Test coverage was added for connector-authored thread selection under vibe-managed filtering.
+
+### Findings
+- none

@@ -35,3 +35,15 @@ Follow-up selection now preserves growth findings while retaining high-severity 
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:28:35.288Z
+- run_id: issue-68-attempt-3-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Connector-managed thread selection is implemented with safeguards that avoid auto-resolving mixed human+bot conversations.
+
+### Findings
+- none
