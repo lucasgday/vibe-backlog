@@ -103,6 +103,8 @@ type ReviewFindingTotals = {
   warning: string | null;
 };
 
+type SeverityCounts = Record<"P0" | "P1" | "P2" | "P3", number>;
+
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
   if (value === undefined || value === null || value === "") return null;
   const raw = typeof value === "number" ? String(value) : String(value).trim();
@@ -284,7 +286,7 @@ async function resolveReviewRunContext(
   };
 }
 
-function summarizeSeverity(findings: ReviewFinding[]): Record<"P0" | "P1" | "P2" | "P3", number> {
+function summarizeSeverity(findings: ReviewFinding[]): SeverityCounts {
   const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
   for (const finding of findings) {
     counts[finding.severity] += 1;
@@ -397,9 +399,9 @@ function buildOutcomeSummaryMarkdown(params: {
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
   terminationReason: ReviewTerminationReason;
   findingTotals: ReviewFindingTotals;
+  severityTotals: SeverityCounts;
 }): string {
   const passStats = buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
-  const severity = summarizeSeverity(params.unresolvedFindings);
   const lines = [
     "## vibe review",
     `- Issue: #${params.issueId} ${params.issueTitle}`,
@@ -412,7 +414,7 @@ function buildOutcomeSummaryMarkdown(params: {
     `- Findings observed: ${params.findingTotals.observed}`,
     `- Unresolved findings: ${params.findingTotals.unresolved}`,
     `- Resolved findings: ${params.findingTotals.resolved}`,
-    `- Severity: P0=${severity.P0}, P1=${severity.P1}, P2=${severity.P2}, P3=${severity.P3}`,
+    `- Severity: P0=${params.severityTotals.P0}, P1=${params.severityTotals.P1}, P2=${params.severityTotals.P2}, P3=${params.severityTotals.P3}`,
   ];
   if (params.findingTotals.source === "lifecycle") {
     lines.push("- Findings totals scope: lifecycle (PR threads + current run)");
@@ -682,6 +684,7 @@ export async function runReviewCommand(
   const unresolvedFindings = dedupeFindingsByFingerprint(flattenReviewFindings(finalOutput));
   const allFindings = Array.from(allFindingsByFingerprint.values());
   const resolvedFindings = computeResolvedFindings(allFindings, unresolvedFindings);
+  let severityTotals = summarizeSeverity(unresolvedFindings);
   let findingTotals: ReviewFindingTotals = {
     observed: allFindings.length,
     unresolved: unresolvedFindings.length,
@@ -710,6 +713,9 @@ export async function runReviewCommand(
         source: "lifecycle",
         warning: null,
       };
+      if (lifecycleTotals.unresolved >= unresolvedFindings.length) {
+        severityTotals = { ...lifecycleTotals.unresolvedSeverity };
+      }
     } catch (error) {
       findingTotals.warning = `lifecycle unavailable (${formatErrorMessage(error)}); using current-run totals`;
     }
@@ -739,6 +745,7 @@ export async function runReviewCommand(
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
     findingTotals,
+    severityTotals,
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
@@ -783,6 +790,7 @@ export async function runReviewCommand(
     providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
     terminationReason,
     findingTotals,
+    severityTotals,
   });
 
   if (!options.dryRun) {

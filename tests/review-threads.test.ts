@@ -114,6 +114,12 @@ describe("review threads resolve core", () => {
       observed: 2,
       unresolved: 1,
       resolved: 1,
+      unresolvedSeverity: {
+        P0: 0,
+        P1: 0,
+        P2: 1,
+        P3: 0,
+      },
     });
   });
 

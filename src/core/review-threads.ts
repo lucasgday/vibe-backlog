@@ -95,6 +95,7 @@ export type ReviewThreadLifecycleTotals = {
   observed: number;
   unresolved: number;
   resolved: number;
+  unresolvedSeverity: Record<"P0" | "P1" | "P2" | "P3", number>;
 };
 
 export type ReviewThreadLifecycleTotalsOptions = {
@@ -530,6 +531,14 @@ function buildLifecycleFindingKey(thread: ReviewThread): string | null {
   return `thread:${thread.id}`;
 }
 
+function normalizeSeverity(value: string | null): "P0" | "P1" | "P2" | "P3" | null {
+  const normalized = (value ?? "").trim().toUpperCase();
+  if (normalized === "P0" || normalized === "P1" || normalized === "P2" || normalized === "P3") {
+    return normalized;
+  }
+  return null;
+}
+
 export async function summarizeReviewThreadLifecycleTotals(
   options: ReviewThreadLifecycleTotalsOptions,
   execaFn: ExecaFn = execa,
@@ -540,24 +549,33 @@ export async function summarizeReviewThreadLifecycleTotals(
   const vibeManagedOnly = options.vibeManagedOnly !== false;
   const selectedThreads = vibeManagedOnly ? allThreads.filter((thread) => isVibeManagedThread(thread)) : allThreads;
 
-  const statusByFindingKey = new Map<string, { unresolved: boolean; resolved: boolean }>();
+  const statusByFindingKey = new Map<string, { unresolved: boolean; resolved: boolean; severity: "P0" | "P1" | "P2" | "P3" | null }>();
   for (const thread of selectedThreads) {
     const findingKey = buildLifecycleFindingKey(thread);
     if (!findingKey) continue;
-    const current = statusByFindingKey.get(findingKey) ?? { unresolved: false, resolved: false };
+    const detailComment = thread.comments[0] ?? null;
+    const severity = normalizeSeverity(extractSeverityAndTitle(detailComment?.body ?? null).severity);
+    const current = statusByFindingKey.get(findingKey) ?? { unresolved: false, resolved: false, severity: null };
     if (thread.isResolved) {
       current.resolved = true;
     } else {
       current.unresolved = true;
+      if (severity) {
+        current.severity = severity;
+      }
     }
     statusByFindingKey.set(findingKey, current);
   }
 
   let unresolved = 0;
   let resolved = 0;
+  const unresolvedSeverity = { P0: 0, P1: 0, P2: 0, P3: 0 };
   for (const status of statusByFindingKey.values()) {
     if (status.unresolved) {
       unresolved += 1;
+      if (status.severity) {
+        unresolvedSeverity[status.severity] += 1;
+      }
     } else if (status.resolved) {
       resolved += 1;
     }
@@ -567,6 +585,7 @@ export async function summarizeReviewThreadLifecycleTotals(
     observed: statusByFindingKey.size,
     unresolved,
     resolved,
+    unresolvedSeverity,
   };
 }
 
