@@ -477,7 +477,7 @@ describe.sequential("cli review", () => {
     ).toBe(true);
   });
 
-  it("creates growth-focused follow-up issue when growth findings are unresolved", async () => {
+  it("creates follow-up issue with all unresolved findings across passes", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
       issue_id: 34,
@@ -541,10 +541,11 @@ describe.sequential("cli review", () => {
     await program.parseAsync(["node", "vibe", "review", "--max-attempts", "1", "--no-publish", "--no-autopush"]);
 
     expect(process.exitCode).toBeUndefined();
+    expect(createdIssueBody).toContain("Validate server input path");
     expect(createdIssueBody).toContain("Improve signup activation prompt");
   });
 
-  it("includes high-severity non-growth findings in growth-focused follow-up issue", async () => {
+  it("includes non-growth findings in follow-up issue regardless of severity", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
     await writeTurnContext({
       issue_id: 34,
@@ -572,11 +573,11 @@ describe.sequential("cli review", () => {
             findingsCount: 0,
             findings: [
               {
-                id: "f-security-critical",
+                id: "f-security-low",
                 pass: "security",
-                severity: "P1",
-                title: "Block open redirect in callback",
-                body: "Callback redirect target is not allowlisted.",
+                severity: "P3",
+                title: "Clarify callback validation logging",
+                body: "Improve log context around callback validation edge cases.",
                 file: "src/core/auth.ts",
                 line: 22,
               },
@@ -609,7 +610,7 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBeUndefined();
     expect(createdIssueBody).toContain("Improve signup activation prompt");
-    expect(createdIssueBody).toContain("Block open redirect in callback");
+    expect(createdIssueBody).toContain("Clarify callback validation logging");
   });
 
   it("stops after first unresolved attempt when autofix is not applied without creating follow-up", async () => {
