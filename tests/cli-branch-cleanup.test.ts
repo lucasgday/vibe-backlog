@@ -78,4 +78,36 @@ describe.sequential("cli branch cleanup", () => {
     expect(errors.some((line) => line.includes("--force-unmerged requires --yes"))).toBe(true);
     expect(execaMock).not.toHaveBeenCalled();
   });
+
+  it("reports pr-merged category when merged PR head matches local branch", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ number: 71, headRefOid: "feedface1234" }]), stderr: "", exitCode: 0 };
+      }
+      if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
+
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "symbolic-ref") return { stdout: "origin/main\n", stderr: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "--verify") return { stdout: "abc123\n", stderr: "", exitCode: 0 };
+      if (args[0] === "for-each-ref") return { stdout: "feature/pr-merged\torigin/feature/pr-merged\t[gone]", stderr: "", exitCode: 0 };
+      if (args[0] === "merge-base") return { stdout: "", stderr: "", exitCode: 1 };
+      if (args[0] === "cherry") return { stdout: "+ deadbeef change\n", stderr: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "feature/pr-merged") return { stdout: "feedface1234\n", stderr: "", exitCode: 0 };
+
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "branch", "cleanup", "--dry-run"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("feature/pr-merged | pr-merged | planned"))).toBe(true);
+    expect(logs.some((line) => line.includes("branch cleanup summary: detected=1 deleted=0 planned=1 skipped=0 errors=0"))).toBe(true);
+  });
 });

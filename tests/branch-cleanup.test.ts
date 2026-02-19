@@ -9,6 +9,7 @@ function gitResponse(stdout: string, exitCode = 0, stderr = ""): { stdout: strin
 describe("branch cleanup core", () => {
   it("deletes merged and patch-equivalent branches and skips non-merged by default", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return gitResponse("[]");
       if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
 
       if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("codex/issue-37-branch-cleanup-automatico\n");
@@ -56,6 +57,119 @@ describe("branch cleanup core", () => {
       "feature/patch:deleted",
       "feature/nonmerged:skipped",
     ]);
+  });
+
+  it("auto-deletes upstream-gone non-merged branch when merged PR head matches local HEAD", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return gitResponse(JSON.stringify([{ number: 71, headRefOid: "feedface1234", mergedAt: "2026-02-19T00:00:00Z" }]));
+      }
+      if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
+
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("main\n");
+      if (args[0] === "symbolic-ref") return gitResponse("origin/main\n");
+      if (args[0] === "rev-parse" && args[1] === "--verify") return gitResponse("abc123\n");
+      if (args[0] === "fetch") return gitResponse("");
+      if (args[0] === "for-each-ref") return gitResponse("feature/pr-merged\torigin/feature/pr-merged\t[gone]");
+      if (args[0] === "merge-base" && args[2] === "feature/pr-merged") return gitResponse("", 1);
+      if (args[0] === "cherry" && args[2] === "feature/pr-merged") return gitResponse("+ abcdef change\n");
+      if (args[0] === "rev-parse" && args[1] === "feature/pr-merged") return gitResponse("feedface1234\n");
+      if (args[0] === "branch" && args[1] === "-D" && args[2] === "feature/pr-merged") return gitResponse("");
+
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+
+    const result = await runBranchCleanup(
+      {
+        dryRun: false,
+      },
+      execaMock as never,
+    );
+
+    expect(result.deleted).toBe(1);
+    expect(result.nonMergedBlocked).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      branch: "feature/pr-merged",
+      category: "pr-merged",
+      status: "deleted",
+      deleteFlag: "-D",
+      command: "git branch -D feature/pr-merged",
+    });
+  });
+
+  it("keeps non-merged branch blocked when merged PR head does not match local HEAD", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return gitResponse(JSON.stringify([{ number: 71, headRefOid: "feedface1234", mergedAt: "2026-02-19T00:00:00Z" }]));
+      }
+      if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
+
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("main\n");
+      if (args[0] === "symbolic-ref") return gitResponse("origin/main\n");
+      if (args[0] === "rev-parse" && args[1] === "--verify") return gitResponse("abc123\n");
+      if (args[0] === "fetch") return gitResponse("");
+      if (args[0] === "for-each-ref") return gitResponse("feature/mismatch\torigin/feature/mismatch\t[gone]");
+      if (args[0] === "merge-base" && args[2] === "feature/mismatch") return gitResponse("", 1);
+      if (args[0] === "cherry" && args[2] === "feature/mismatch") return gitResponse("+ abcdef change\n");
+      if (args[0] === "rev-parse" && args[1] === "feature/mismatch") return gitResponse("deadcafe9876\n");
+
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+
+    const result = await runBranchCleanup(
+      {
+        dryRun: false,
+      },
+      execaMock as never,
+    );
+
+    expect(result.deleted).toBe(0);
+    expect(result.nonMergedBlocked).toEqual(["feature/mismatch"]);
+    expect(result.candidates[0]).toMatchObject({
+      branch: "feature/mismatch",
+      category: "non-merged",
+      status: "skipped",
+      deleteFlag: null,
+    });
+    expect(result.candidates[0]?.reason).toContain("merged PR #71 head mismatch");
+  });
+
+  it("warns and keeps non-merged branch blocked when merged PR lookup fails", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        return gitResponse("", 1, "error connecting to api.github.com");
+      }
+      if (cmd !== "git") throw new Error(`unexpected command: ${cmd}`);
+
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return gitResponse("main\n");
+      if (args[0] === "symbolic-ref") return gitResponse("origin/main\n");
+      if (args[0] === "rev-parse" && args[1] === "--verify") return gitResponse("abc123\n");
+      if (args[0] === "fetch") return gitResponse("");
+      if (args[0] === "for-each-ref") return gitResponse("feature/no-gh\torigin/feature/no-gh\t[gone]");
+      if (args[0] === "merge-base" && args[2] === "feature/no-gh") return gitResponse("", 1);
+      if (args[0] === "cherry" && args[2] === "feature/no-gh") return gitResponse("+ abcdef change\n");
+
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+
+    const result = await runBranchCleanup(
+      {
+        dryRun: false,
+      },
+      execaMock as never,
+    );
+
+    expect(result.deleted).toBe(0);
+    expect(result.nonMergedBlocked).toEqual(["feature/no-gh"]);
+    expect(result.warnings.some((warning) => warning.includes("unable to inspect merged PR"))).toBe(true);
+    expect(result.candidates[0]).toMatchObject({
+      branch: "feature/no-gh",
+      category: "non-merged",
+      status: "skipped",
+      deleteFlag: null,
+      reason: "requires --force-unmerged --yes",
+    });
   });
 
   it("deletes non-merged branches only when force + confirmation are enabled", async () => {

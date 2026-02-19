@@ -2,7 +2,7 @@ import { execa } from "execa";
 
 type ExecaFn = typeof execa;
 
-export type BranchCleanupCategory = "merged" | "patch-equivalent" | "non-merged";
+export type BranchCleanupCategory = "merged" | "patch-equivalent" | "pr-merged" | "non-merged";
 export type BranchCleanupStatus = "planned" | "deleted" | "skipped" | "error";
 
 export type BranchCleanupCandidate = {
@@ -52,8 +52,22 @@ type GitCommandResult = {
   exitCode: number;
 };
 
+type MergedPullRequestSnapshot = {
+  number: number;
+  headRefOid: string | null;
+};
+
 async function runGitCommand(execaFn: ExecaFn, args: string[]): Promise<GitCommandResult> {
   const result = await execaFn("git", args, { stdio: "pipe", reject: false });
+  return {
+    stdout: typeof result.stdout === "string" ? result.stdout : "",
+    stderr: typeof result.stderr === "string" ? result.stderr : "",
+    exitCode: typeof result.exitCode === "number" ? result.exitCode : 0,
+  };
+}
+
+async function runGhCommand(execaFn: ExecaFn, args: string[]): Promise<GitCommandResult> {
+  const result = await execaFn("gh", args, { stdio: "pipe", reject: false });
   return {
     stdout: typeof result.stdout === "string" ? result.stdout : "",
     stderr: typeof result.stderr === "string" ? result.stderr : "",
@@ -172,6 +186,69 @@ async function isPatchEquivalent(execaFn: ExecaFn, branch: string, baseRef: stri
   return !hasPlus;
 }
 
+function normalizeSha(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{7,40}$/.test(normalized)) return null;
+  return normalized;
+}
+
+async function resolveBranchHeadSha(execaFn: ExecaFn, branch: string): Promise<string> {
+  const resolved = await runGitCommand(execaFn, ["rev-parse", branch]);
+  if (resolved.exitCode !== 0) {
+    throw new Error(`branch cleanup: unable to resolve HEAD sha for '${branch}'.`);
+  }
+  const sha = normalizeSha(resolved.stdout);
+  if (!sha) {
+    throw new Error(`branch cleanup: invalid HEAD sha for '${branch}'.`);
+  }
+  return sha;
+}
+
+function parseMergedPullRequestRows(stdout: string): MergedPullRequestSnapshot[] {
+  const parsed = JSON.parse(stdout) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error("branch cleanup: unexpected gh pr list payload (expected array).");
+  }
+
+  const rows: MergedPullRequestSnapshot[] = [];
+  for (const row of parsed) {
+    if (typeof row !== "object" || row === null) continue;
+    const record = row as Record<string, unknown>;
+    const number = typeof record.number === "number" && Number.isInteger(record.number) && record.number > 0 ? record.number : null;
+    if (!number) continue;
+    const headRaw = typeof record.headRefOid === "string" ? record.headRefOid.trim() : "";
+    rows.push({
+      number,
+      headRefOid: normalizeSha(headRaw),
+    });
+  }
+
+  return rows;
+}
+
+async function findMergedPullRequestForBranch(execaFn: ExecaFn, branch: string): Promise<MergedPullRequestSnapshot | null> {
+  const listed = await runGhCommand(execaFn, [
+    "pr",
+    "list",
+    "--head",
+    branch,
+    "--state",
+    "merged",
+    "--limit",
+    "20",
+    "--json",
+    "number,headRefOid,mergedAt",
+  ]);
+  if (listed.exitCode !== 0) {
+    const detail = listed.stderr.trim() || listed.stdout.trim() || "unknown gh error";
+    throw new Error(`gh pr list failed (${detail})`);
+  }
+
+  const rows = parseMergedPullRequestRows(listed.stdout);
+  return rows[0] ?? null;
+}
+
 function resolveProtectedBranches(currentBranch: string, baseRef: string): string[] {
   const protectedSet = new Set<string>(["main", currentBranch, baseRef]);
   if (baseRef.startsWith("origin/")) {
@@ -254,9 +331,40 @@ export async function runBranchCleanup(
     }
 
     let deleteFlag: "-d" | "-D" | null = null;
+    if (category === "non-merged" && !forceUnmerged) {
+      try {
+        const mergedPr = await findMergedPullRequestForBranch(execaFn, snapshot.branch);
+        if (mergedPr) {
+          const localHeadSha = await resolveBranchHeadSha(execaFn, snapshot.branch);
+          const mergedPrHeadSha = normalizeSha(mergedPr.headRefOid);
+          if (mergedPrHeadSha && localHeadSha === mergedPrHeadSha) {
+            category = "pr-merged";
+          } else {
+            const reason = mergedPrHeadSha
+              ? `merged PR #${mergedPr.number} head mismatch (local ${localHeadSha.slice(0, 12)} != PR ${mergedPrHeadSha.slice(0, 12)})`
+              : `merged PR #${mergedPr.number} did not expose head sha`;
+            nonMergedBlocked.push(snapshot.branch);
+            candidates.push({
+              branch: snapshot.branch,
+              upstream: snapshot.upstream,
+              category,
+              deleteFlag: null,
+              status: "skipped",
+              reason,
+              command: null,
+            });
+            continue;
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`branch cleanup: unable to inspect merged PR for '${snapshot.branch}' (${message}); treating as non-merged.`);
+      }
+    }
+
     if (category === "merged") {
       deleteFlag = "-d";
-    } else if (category === "patch-equivalent") {
+    } else if (category === "patch-equivalent" || category === "pr-merged") {
       deleteFlag = "-D";
     } else if (forceUnmerged) {
       deleteFlag = "-D";
