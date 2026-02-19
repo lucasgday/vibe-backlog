@@ -81,6 +81,8 @@ export type ReviewCommandResult = {
   rationaleAutofilled: boolean;
   threadResolution: ReviewThreadsResolveResult | null;
   threadResolutionWarning: string | null;
+  findingTotalsSource: "current-run" | "lifecycle";
+  findingTotalsWarning: string | null;
 };
 
 type ReviewRunContext = {
@@ -339,6 +341,43 @@ function computeResolvedFindings(allFindings: ReviewFinding[], unresolvedFinding
 
 function toFindingKey(finding: ReviewFinding): string {
   return `fingerprint:${computeFindingFingerprint(finding)}`;
+}
+
+function normalizeCanonicalKeyPart(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toCanonicalFindingKey(finding: ReviewFinding): string | null {
+  const normalizedFile = normalizeCanonicalKeyPart(finding.file ?? null);
+  const normalizedTitle = normalizeCanonicalKeyPart(finding.title);
+  const normalizedLine = typeof finding.line === "number" && finding.line > 0 ? String(finding.line) : "";
+  if (!normalizedFile && !normalizedLine && !normalizedTitle) {
+    return null;
+  }
+  return `canonical:${normalizedFile}|${normalizedLine}|${normalizedTitle}`;
+}
+
+function buildCanonicalFindingKeyMap(findings: ReviewFinding[]): Map<string, string> {
+  const mapping = new Map<string, string>();
+  for (const finding of findings) {
+    const canonicalKey = toCanonicalFindingKey(finding);
+    if (!canonicalKey) continue;
+    if (!mapping.has(canonicalKey)) {
+      mapping.set(canonicalKey, toFindingKey(finding));
+    }
+  }
+  return mapping;
+}
+
+function mapLifecycleFindingKeyToCurrentFindingKey(
+  lifecycleKey: string,
+  currentCanonicalFindingKeyMap: Map<string, string>,
+): string {
+  if (!lifecycleKey.startsWith("canonical:")) {
+    return lifecycleKey;
+  }
+  return currentCanonicalFindingKeyMap.get(lifecycleKey) ?? lifecycleKey;
 }
 
 function toFindingKeySet(findings: ReviewFinding[]): Set<string> {
@@ -790,8 +829,17 @@ export async function runReviewCommand(
       const currentObservedFindingKeys = toFindingKeySet(allFindings);
       const currentUnresolvedFindingKeys = toFindingKeySet(unresolvedFindings);
       const currentResolvedFindingKeys = toFindingKeySet(resolvedFindings);
-      const lifecycleUnresolvedFindingKeys = new Set(lifecycleTotals.unresolvedFindingKeys);
-      const lifecycleResolvedFindingKeys = new Set(lifecycleTotals.resolvedFindingKeys);
+      const currentCanonicalFindingKeyMap = buildCanonicalFindingKeyMap(allFindings);
+      const lifecycleUnresolvedFindingKeys = new Set(
+        lifecycleTotals.unresolvedFindingKeys.map((findingKey) =>
+          mapLifecycleFindingKeyToCurrentFindingKey(findingKey, currentCanonicalFindingKeyMap),
+        ),
+      );
+      const lifecycleResolvedFindingKeys = new Set(
+        lifecycleTotals.resolvedFindingKeys.map((findingKey) =>
+          mapLifecycleFindingKeyToCurrentFindingKey(findingKey, currentCanonicalFindingKeyMap),
+        ),
+      );
 
       const observedFindingKeys = new Set([
         ...currentObservedFindingKeys,
@@ -912,5 +960,7 @@ export async function runReviewCommand(
     rationaleAutofilled: pr.rationaleAutofilled,
     threadResolution,
     threadResolutionWarning,
+    findingTotalsSource: findingTotals.source,
+    findingTotalsWarning: findingTotals.warning,
   };
 }

@@ -125,6 +125,65 @@ describe("review threads resolve core", () => {
     });
   });
 
+  it("uses canonical key fallback for connector-managed threads without fingerprint", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([
+              buildThreadPayload({
+                id: "PRRT_connector_unresolved",
+                isResolved: false,
+                authorLogin: "chatgpt-codex-connector",
+                path: "src/core/review.ts",
+                line: 531,
+                body: "**[P1] Keep non-growth findings in follow-up issue payload**\n\nPass: `implementation`",
+              }),
+              buildThreadPayload({
+                id: "PRRT_connector_resolved_same_key",
+                isResolved: true,
+                authorLogin: "chatgpt-codex-connector",
+                path: "src/core/review.ts",
+                line: 531,
+                body: "**[P1] Keep non-growth findings in follow-up issue payload**\n\nPass: `implementation`",
+              }),
+              buildThreadPayload({
+                id: "PRRT_resolved_unique",
+                isResolved: true,
+                body:
+                  "**[P2] Add retry guard**\n\nTimeouts need retry.\n\nPass: `ops`\n\n<!-- vibe:fingerprint:def456abc123 -->",
+              }),
+            ]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const totals = await summarizeReviewThreadLifecycleTotals(
+      {
+        prNumber: 51,
+      },
+      execaMock as never,
+    );
+
+    expect(totals).toEqual({
+      observed: 2,
+      unresolved: 1,
+      resolved: 1,
+      unresolvedSeverity: {
+        P0: 0,
+        P1: 1,
+        P2: 0,
+        P3: 0,
+      },
+      unresolvedFindingKeys: ["canonical:src/core/review.ts|531|keep non-growth findings in follow-up issue payload"],
+      resolvedFindingKeys: ["fingerprint:def456abc123"],
+    });
+  });
+
   it("plans dry-run for all unresolved threads without mutations", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/dedupe\n" };

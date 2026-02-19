@@ -318,6 +318,21 @@ function extractFingerprint(body: string | null): string | null {
   return match ? String(match[1]).trim().toLowerCase() : null;
 }
 
+function normalizeCanonicalKeyPart(value: string | null): string {
+  if (!value) return "";
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildCanonicalFindingKey(pathValue: string | null, line: number | null, title: string | null): string | null {
+  const normalizedPath = normalizeCanonicalKeyPart(pathValue);
+  const normalizedTitle = normalizeCanonicalKeyPart(title);
+  const normalizedLine = typeof line === "number" && line > 0 ? String(line) : "";
+  if (!normalizedPath && !normalizedLine && !normalizedTitle) {
+    return null;
+  }
+  return `canonical:${normalizedPath}|${normalizedLine}|${normalizedTitle}`;
+}
+
 function isManagedAutomationReply(body: string | null): boolean {
   if (!body) return false;
   return body.includes("Resolved via `vibe review threads resolve`.");
@@ -530,6 +545,13 @@ function buildLifecycleFindingKey(thread: ReviewThread): string | null {
   if (!firstComment) return null;
   const fingerprint = extractFingerprint(firstComment.body);
   if (fingerprint) return `fingerprint:${fingerprint}`;
+  const severityTitle = extractSeverityAndTitle(firstComment.body);
+  const canonicalKey = buildCanonicalFindingKey(
+    firstComment.path,
+    firstComment.line ?? firstComment.originalLine,
+    severityTitle.title,
+  );
+  if (canonicalKey) return canonicalKey;
   return `thread:${thread.id}`;
 }
 

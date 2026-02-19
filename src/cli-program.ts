@@ -1729,6 +1729,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         }
         console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
         console.log(`review: termination=${result.terminationReason}`);
+        console.log(`review: findings_totals_source=${result.findingTotalsSource}`);
+        if (result.findingTotalsWarning) {
+          console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
+        }
         if (result.rationaleAutofilled) {
           console.log("review: rationale sections autofilled in existing PR body.");
         }

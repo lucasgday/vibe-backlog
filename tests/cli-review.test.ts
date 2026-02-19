@@ -612,6 +612,7 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Unresolved findings: 0"))).toBe(true);
     expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
     expect(logs.some((line) => line.includes("Findings totals scope: lifecycle"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: findings_totals_source=lifecycle"))).toBe(true);
   });
 
   it("unions lifecycle and current-run finding sets when both are present", async () => {
@@ -702,6 +703,143 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Findings observed: 2"))).toBe(true);
     expect(logs.some((line) => line.includes("Unresolved findings: 1"))).toBe(true);
     expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
+  });
+
+  it("dedupes connector-managed lifecycle threads without fingerprint against current-run findings", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "feedface1234567890\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-lifecycle-connector-dedupe", findingsCount: 1, autofixApplied: false }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "POST" && args[3] === "repos/acme/demo/issues/99/comments") {
+        return { stdout: JSON.stringify({ id: 9001 }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "POST" && args[3] === "repos/acme/demo/pulls/99/comments") {
+        return { stdout: JSON.stringify({ id: 9100 }) };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "feedface1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [
+                        {
+                          id: "PRRT_connector_unresolved",
+                          isResolved: false,
+                          isOutdated: false,
+                          comments: {
+                            nodes: [
+                              {
+                                id: "comment-connector",
+                                body: "**[P2] Validate user input**\n\nPass: `security`",
+                                url: "https://example.test/comment/connector",
+                                path: "src/cli-program.ts",
+                                line: 42,
+                                originalLine: 42,
+                                author: { login: "chatgpt-codex-connector" },
+                              },
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("Findings observed: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("Unresolved findings: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("Resolved findings: 0"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: findings_totals_source=lifecycle"))).toBe(true);
+  });
+
+  it("emits structured findings totals warning when lifecycle totals are unavailable", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-lifecycle-warning", findingsCount: 0 }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          throw new Error("simulated lifecycle failure");
+        }
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "5", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review: findings_totals_source=current-run"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: findings_totals_warning=lifecycle unavailable"))).toBe(true);
   });
 
   it("auto-closes open follow-up issues when unresolved findings reach zero", async () => {
