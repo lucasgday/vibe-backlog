@@ -542,7 +542,74 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBeUndefined();
     expect(createdIssueBody).toContain("Improve signup activation prompt");
-    expect(createdIssueBody).not.toContain("Validate server input path");
+  });
+
+  it("includes high-severity non-growth findings in growth-focused follow-up issue", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    let createdIssueBody = "";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123" }]) };
+      if (cmd === "zsh") {
+        return {
+          stdout: buildAgentOutput({
+            runId: "run-growth-followup-critical",
+            findingsCount: 0,
+            findings: [
+              {
+                id: "f-security-critical",
+                pass: "security",
+                severity: "P1",
+                title: "Block open redirect in callback",
+                body: "Callback redirect target is not allowlisted.",
+                file: "src/core/auth.ts",
+                line: 22,
+              },
+              {
+                id: "f-growth",
+                pass: "growth",
+                severity: "P2",
+                title: "Improve signup activation prompt",
+                body: "Onboarding step lacks targeted nudge for first success milestone.",
+                file: "src/ui/onboarding.tsx",
+                line: 48,
+              },
+            ],
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const bodyFileIndex = args.findIndex((entry) => entry === "--body-file");
+        const bodyFilePath = bodyFileIndex >= 0 ? String(args[bodyFileIndex + 1] ?? "") : "";
+        createdIssueBody = bodyFilePath ? readFileSync(bodyFilePath, "utf8") : "";
+        return { stdout: "https://example.test/issues/203\n" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "1", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(createdIssueBody).toContain("Improve signup activation prompt");
+    expect(createdIssueBody).toContain("Block open redirect in callback");
   });
 
   it("stops after first unresolved attempt when autofix is not applied without creating follow-up", async () => {

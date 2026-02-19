@@ -300,7 +300,14 @@ function buildFindingsFingerprintKey(findings: ReviewFinding[]): string {
 
 function selectFollowUpFindings(findings: ReviewFinding[]): ReviewFinding[] {
   const growthFindings = findings.filter((finding) => finding.pass === "growth");
-  return growthFindings.length > 0 ? growthFindings : findings;
+  if (growthFindings.length === 0) {
+    return findings;
+  }
+
+  const highSeverityNonGrowth = findings.filter(
+    (finding) => finding.pass !== "growth" && (finding.severity === "P0" || finding.severity === "P1"),
+  );
+  return [...growthFindings, ...highSeverityNonGrowth];
 }
 
 function formatTermination(terminationReason: ReviewTerminationReason): string {
