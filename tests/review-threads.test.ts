@@ -120,6 +120,8 @@ describe("review threads resolve core", () => {
         P2: 1,
         P3: 0,
       },
+      unresolvedFindingKeys: ["fingerprint:abc123def456"],
+      resolvedFindingKeys: ["fingerprint:def456abc123"],
     });
   });
 

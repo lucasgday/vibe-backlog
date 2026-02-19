@@ -337,6 +337,14 @@ function computeResolvedFindings(allFindings: ReviewFinding[], unresolvedFinding
   return allFindings.filter((finding) => !unresolvedFingerprints.has(computeFindingFingerprint(finding)));
 }
 
+function toFindingKey(finding: ReviewFinding): string {
+  return `fingerprint:${computeFindingFingerprint(finding)}`;
+}
+
+function toFindingKeySet(findings: ReviewFinding[]): Set<string> {
+  return new Set(findings.map((finding) => toFindingKey(finding)));
+}
+
 function buildPassFindingStats(
   passResults: ReviewPassResult[],
   allFindings: ReviewFinding[],
@@ -779,9 +787,26 @@ export async function runReviewCommand(
         execaFn,
       );
 
-      const observed = Math.max(currentRunFindingTotals.observed, lifecycleTotals.observed);
-      const unresolved = Math.max(currentRunFindingTotals.unresolved, lifecycleTotals.unresolved);
-      const resolved = Math.max(currentRunFindingTotals.resolved, lifecycleTotals.resolved, Math.max(0, observed - unresolved));
+      const currentObservedFindingKeys = toFindingKeySet(allFindings);
+      const currentUnresolvedFindingKeys = toFindingKeySet(unresolvedFindings);
+      const currentResolvedFindingKeys = toFindingKeySet(resolvedFindings);
+      const lifecycleUnresolvedFindingKeys = new Set(lifecycleTotals.unresolvedFindingKeys);
+      const lifecycleResolvedFindingKeys = new Set(lifecycleTotals.resolvedFindingKeys);
+
+      const observedFindingKeys = new Set([
+        ...currentObservedFindingKeys,
+        ...lifecycleUnresolvedFindingKeys,
+        ...lifecycleResolvedFindingKeys,
+      ]);
+      const unresolvedFindingKeys = new Set([...currentUnresolvedFindingKeys, ...lifecycleUnresolvedFindingKeys]);
+      const resolvedFindingKeys = new Set([...currentResolvedFindingKeys, ...lifecycleResolvedFindingKeys]);
+      for (const unresolvedFindingKey of unresolvedFindingKeys) {
+        resolvedFindingKeys.delete(unresolvedFindingKey);
+      }
+
+      const observed = observedFindingKeys.size;
+      const unresolved = unresolvedFindingKeys.size;
+      const resolved = Math.max(resolvedFindingKeys.size, Math.max(0, observed - unresolved));
       findingTotals = {
         observed,
         unresolved,
@@ -789,9 +814,14 @@ export async function runReviewCommand(
         source: "lifecycle",
         warning: null,
       };
-      if (lifecycleTotals.unresolved >= unresolvedFindings.length) {
-        severityTotals = { ...lifecycleTotals.unresolvedSeverity };
+
+      const mergedSeverityTotals: SeverityCounts = { ...lifecycleTotals.unresolvedSeverity };
+      for (const finding of unresolvedFindings) {
+        const findingKey = toFindingKey(finding);
+        if (lifecycleUnresolvedFindingKeys.has(findingKey)) continue;
+        mergedSeverityTotals[finding.severity] += 1;
       }
+      severityTotals = mergedSeverityTotals;
     } catch (error) {
       findingTotals = {
         ...currentRunFindingTotals,
