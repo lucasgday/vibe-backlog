@@ -17,3 +17,15 @@ Coverage added:
 
 What remains untested:
 - Live GitHub API integration timing/rate-limit behavior (covered by mocked command flows only).
+
+## Run 2026-02-19T13:46:09.189Z
+- run_id: issue-59-pr-70-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Regression coverage is strong for close success, retry success, retry failure warning, and no-op; CLI integration tests also verify close invocation and warning surfacing.
+
+### Findings
+- none
