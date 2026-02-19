@@ -119,3 +119,15 @@ Regression coverage additions are aligned with changed behavior; no quality find
 
 ### Findings
 - none
+
+## Run 2026-02-19T19:13:18.356Z
+- run_id: issue-73-pr-74-attempt-1-pass-runner-5
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Regression coverage now exercises absolute-path normalization and canonical/fingerprint merge behavior; no additional quality gaps found.
+
+### Findings
+- none
