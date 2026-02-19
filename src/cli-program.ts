@@ -1469,6 +1469,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (reviewResult.rationaleAutofilled) {
           console.log("pr open: rationale sections autofilled in existing PR body.");
         }
+        if (reviewResult.threadResolutionWarning) {
+          console.log(`pr open: ${reviewResult.threadResolutionWarning}`);
+        }
         console.log(
           `pr open: review gate complete attempts=${reviewResult.attemptsUsed} unresolved=${reviewResult.unresolvedFindings.length}`,
         );
@@ -1749,6 +1752,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           console.log(
             `review: threads selected=${result.threadResolution.selectedThreads} resolved=${result.threadResolution.resolved} failed=${result.threadResolution.failed}`,
           );
+        }
+        if (result.threadResolutionWarning) {
+          console.log(result.threadResolutionWarning);
         }
 
         console.log("\n" + result.summary);

@@ -303,8 +303,27 @@ function extractFingerprint(body: string | null): string | null {
   return match ? String(match[1]).trim().toLowerCase() : null;
 }
 
+function isManagedAutomationReply(body: string | null): boolean {
+  if (!body) return false;
+  return body.includes("Resolved via `vibe review threads resolve`.");
+}
+
 function isVibeManagedThread(thread: ReviewThread): boolean {
-  return thread.comments.some((comment) => extractFingerprint(comment.body) !== null);
+  const firstComment = thread.comments[0];
+  if (!firstComment || extractFingerprint(firstComment.body) === null) {
+    return false;
+  }
+
+  // Avoid closing mixed human+bot conversations automatically:
+  // only auto-resolve threads whose additional replies are managed automation replies.
+  for (let index = 1; index < thread.comments.length; index += 1) {
+    const comment = thread.comments[index];
+    if (!isManagedAutomationReply(comment?.body ?? null)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function extractPass(body: string | null): string | null {

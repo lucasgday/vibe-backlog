@@ -75,6 +75,7 @@ export type ReviewCommandResult = {
   terminationReason: ReviewTerminationReason;
   rationaleAutofilled: boolean;
   threadResolution: ReviewThreadsResolveResult | null;
+  threadResolutionWarning: string | null;
 };
 
 type ReviewRunContext = {
@@ -649,23 +650,27 @@ export async function runReviewCommand(
   }
 
   let threadResolution: ReviewThreadsResolveResult | null = null;
+  let threadResolutionWarning: string | null = null;
   if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
-    threadResolution = await resolveReviewThreads(
-      {
-        prNumber: pr.number,
-        threadIds: [],
-        allUnresolved: true,
-        bodyOverride: null,
-        dryRun: false,
-        vibeManagedOnly: true,
-      },
-      execaFn,
-    );
-
-    if (threadResolution.failed > 0) {
-      throw new Error(
-        `review: auto-resolve failed for ${threadResolution.failed} thread(s) on PR #${pr.number} (replied=${threadResolution.replied} resolved=${threadResolution.resolved}).`,
+    try {
+      threadResolution = await resolveReviewThreads(
+        {
+          prNumber: pr.number,
+          threadIds: [],
+          allUnresolved: true,
+          bodyOverride: null,
+          dryRun: false,
+          vibeManagedOnly: true,
+        },
+        execaFn,
       );
+
+      if (threadResolution.failed > 0) {
+        threadResolutionWarning = `review: thread auto-resolve warning selected=${threadResolution.selectedThreads} resolved=${threadResolution.resolved} failed=${threadResolution.failed}.`;
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : String(error);
+      threadResolutionWarning = `review: thread auto-resolve warning ${message}`;
     }
   }
 
@@ -691,5 +696,6 @@ export async function runReviewCommand(
     terminationReason,
     rationaleAutofilled: pr.rationaleAutofilled,
     threadResolution,
+    threadResolutionWarning,
   };
 }

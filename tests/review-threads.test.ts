@@ -140,6 +140,66 @@ describe("review threads resolve core", () => {
     expect(result.items[0]?.threadId).toBe("PRRT_vibe");
   });
 
+  it("does not auto-select mixed human+bot threads when vibeManagedOnly is enabled", async () => {
+    const mixedThread = {
+      id: "PRRT_mixed",
+      isResolved: false,
+      isOutdated: false,
+      comments: {
+        nodes: [
+          {
+            id: "comment-bot",
+            body: "**[P2] Validate input paths**\n\nPass: `security`\n\n<!-- vibe:fingerprint:abc123def456 -->",
+            url: "https://example.test/comment/mixed-bot",
+            path: "src/cli-program.ts",
+            line: 42,
+            originalLine: 42,
+            author: { login: "review-bot" },
+          },
+          {
+            id: "comment-human",
+            body: "I still see this reproducing in edge case X.",
+            url: "https://example.test/comment/mixed-human",
+            path: "src/cli-program.ts",
+            line: 42,
+            originalLine: 42,
+            author: { login: "human-reviewer" },
+          },
+        ],
+      },
+    };
+
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: "abcdef1234567890" }) };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => entry.startsWith("query=")) ?? "";
+        if (queryArg.includes("reviewThreads(first:100")) {
+          return {
+            stdout: buildThreadsGraphqlResponse([mixedThread]),
+          };
+        }
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await resolveReviewThreads(
+      {
+        prNumber: 51,
+        threadIds: [],
+        allUnresolved: true,
+        bodyOverride: null,
+        dryRun: true,
+        vibeManagedOnly: true,
+      },
+      execaMock as never,
+    );
+
+    expect(result.totalThreads).toBe(1);
+    expect(result.selectedThreads).toBe(0);
+    expect(result.planned).toBe(0);
+  });
+
   it("replies and resolves a single thread using override body", async () => {
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/dedupe\n" };
