@@ -59,3 +59,15 @@ Regression tests now assert that follow-up payloads include findings across pass
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:36:49.548Z
+- run_id: issue-68-attempt-5-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Coverage includes regression checks for pass totals and resolved findings presentation, plus existing review-flow tests remain green.
+
+### Findings
+- none

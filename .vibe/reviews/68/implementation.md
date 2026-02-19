@@ -59,3 +59,15 @@ Follow-up issue creation now consistently includes the full unresolved findings 
 
 ### Findings
 - none
+
+## Run 2026-02-19T03:36:49.547Z
+- run_id: issue-68-attempt-5-2026-02-19
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Summary reporting now preserves full finding history (observed/unresolved/resolved) and adds resolved-finding visibility without filtering by pass, matching the intended review semantics.
+
+### Findings
+- none
