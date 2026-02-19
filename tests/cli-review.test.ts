@@ -7,6 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProgram } from "../src/cli-program";
 import { getTurnContextPath, writeTurnContext } from "../src/core/turn";
 
+type AgentFinding = {
+  id: string;
+  pass: "implementation" | "security" | "quality" | "ux" | "growth" | "ops";
+  severity: "P0" | "P1" | "P2" | "P3";
+  title: string;
+  body: string;
+  file: string;
+  line: number;
+};
+
 function buildAgentOutput(params: {
   runId: string;
   findingsCount: number;
@@ -14,10 +24,12 @@ function buildAgentOutput(params: {
   findingTitle?: string;
   autofixApplied?: boolean;
   changedFiles?: string[];
+  findings?: AgentFinding[];
 }): string {
   const severity = params.severity ?? "P2";
-  const finding =
-    params.findingsCount > 0
+  const findings =
+    params.findings ??
+    (params.findingsCount > 0
       ? [
           {
             id: "f-1",
@@ -27,24 +39,25 @@ function buildAgentOutput(params: {
             body: "Input path needs validation.",
             file: "src/cli-program.ts",
             line: 42,
-          },
+          } satisfies AgentFinding,
         ]
-      : [];
+      : []);
 
   return JSON.stringify({
     version: 1,
     run_id: params.runId,
     passes: [
       { name: "implementation", summary: "ok", findings: [] },
-      { name: "security", summary: "security pass", findings: finding },
+      { name: "security", summary: "security pass", findings: findings.filter((finding) => finding.pass === "security") },
       { name: "quality", summary: "ok", findings: [] },
       { name: "ux", summary: "ok", findings: [] },
+      { name: "growth", summary: "growth pass", findings: findings.filter((finding) => finding.pass === "growth") },
       { name: "ops", summary: "ok", findings: [] },
     ],
     autofix: {
       applied: params.autofixApplied ?? true,
       summary: "Applied deterministic fixes",
-      changed_files: params.changedFiles ?? (params.findingsCount > 0 ? ["src/cli-program.ts"] : []),
+      changed_files: params.changedFiles ?? (findings.length > 0 ? ["src/cli-program.ts"] : []),
     },
   });
 }
@@ -462,6 +475,191 @@ describe.sequential("cli review", () => {
         ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "issue" && args[1] === "create",
       ),
     ).toBe(true);
+  });
+
+  it("reports pass totals and resolved findings after autofix clears findings", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    let agentRuns = 0;
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") {
+        agentRuns += 1;
+        if (agentRuns === 1) {
+          return { stdout: buildAgentOutput({ runId: "run-resolve-1", findingsCount: 1, autofixApplied: true }) };
+        }
+        return { stdout: buildAgentOutput({ runId: "run-resolve-2", findingsCount: 0, autofixApplied: true }) };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "5", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(agentRuns).toBe(2);
+    expect(logs.some((line) => line.includes("Findings observed: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("- security: total=1 unresolved=0 resolved=1"))).toBe(true);
+    expect(logs.some((line) => line.includes("### Resolved Findings"))).toBe(true);
+    expect(logs.some((line) => line.includes("Validate user input"))).toBe(true);
+  });
+
+  it("creates follow-up issue with all unresolved findings across passes", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    let createdIssueBody = "";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123" }]) };
+      if (cmd === "zsh") {
+        return {
+          stdout: buildAgentOutput({
+            runId: "run-growth-followup",
+            findingsCount: 0,
+            findings: [
+              {
+                id: "f-security",
+                pass: "security",
+                severity: "P2",
+                title: "Validate server input path",
+                body: "Server path input lacks canonicalization.",
+                file: "src/core/review.ts",
+                line: 101,
+              },
+              {
+                id: "f-growth",
+                pass: "growth",
+                severity: "P2",
+                title: "Improve signup activation prompt",
+                body: "Onboarding step lacks targeted nudge for first success milestone.",
+                file: "src/ui/onboarding.tsx",
+                line: 48,
+              },
+            ],
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const bodyFileIndex = args.findIndex((entry) => entry === "--body-file");
+        const bodyFilePath = bodyFileIndex >= 0 ? String(args[bodyFileIndex + 1] ?? "") : "";
+        createdIssueBody = bodyFilePath ? readFileSync(bodyFilePath, "utf8") : "";
+        return { stdout: "https://example.test/issues/202\n" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "1", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(createdIssueBody).toContain("Validate server input path");
+    expect(createdIssueBody).toContain("Improve signup activation prompt");
+  });
+
+  it("includes non-growth findings in follow-up issue regardless of severity", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    let createdIssueBody = "";
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123" }]) };
+      if (cmd === "zsh") {
+        return {
+          stdout: buildAgentOutput({
+            runId: "run-growth-followup-critical",
+            findingsCount: 0,
+            findings: [
+              {
+                id: "f-security-low",
+                pass: "security",
+                severity: "P3",
+                title: "Clarify callback validation logging",
+                body: "Improve log context around callback validation edge cases.",
+                file: "src/core/auth.ts",
+                line: 22,
+              },
+              {
+                id: "f-growth",
+                pass: "growth",
+                severity: "P2",
+                title: "Improve signup activation prompt",
+                body: "Onboarding step lacks targeted nudge for first success milestone.",
+                file: "src/ui/onboarding.tsx",
+                line: 48,
+              },
+            ],
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const bodyFileIndex = args.findIndex((entry) => entry === "--body-file");
+        const bodyFilePath = bodyFileIndex >= 0 ? String(args[bodyFileIndex + 1] ?? "") : "";
+        createdIssueBody = bodyFilePath ? readFileSync(bodyFilePath, "utf8") : "";
+        return { stdout: "https://example.test/issues/203\n" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--max-attempts", "1", "--no-publish", "--no-autopush"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(createdIssueBody).toContain("Improve signup activation prompt");
+    expect(createdIssueBody).toContain("Clarify callback validation logging");
   });
 
   it("stops after first unresolved attempt when autofix is not applied without creating follow-up", async () => {

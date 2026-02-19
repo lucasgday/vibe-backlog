@@ -12,6 +12,7 @@ describe("review agent schema", () => {
         { name: "security", summary: "ok", findings: [] },
         { name: "quality", summary: "ok", findings: [] },
         { name: "ux", summary: "ok", findings: [] },
+        { name: "growth", summary: "ok", findings: [] },
         { name: "ops", summary: "ok", findings: [] },
       ],
       autofix: {
@@ -52,6 +53,7 @@ describe("review agent schema", () => {
         { name: "security", summary: "ok", findings: [] },
         { name: "quality", summary: "ok", findings: [] },
         { name: "ux", summary: "ok", findings: [] },
+        { name: "growth", summary: "ok", findings: [] },
         { name: "ops", summary: "ok", findings: [] },
       ],
       autofix: {

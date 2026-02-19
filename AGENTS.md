@@ -198,7 +198,8 @@ For any non-trivial change, the agent MUST execute this sequence:
 2) **Security Pass** (role: AppSec) (AppSec review: OWASP/NIST mindset)
 3) **Quality Pass** (role: QA / Test) (tests + edge cases)
 4) **UX/Frontend Pass** (only if UI touched)
-5) **Ops/Release Pass** (only if packaging/CLI/CI touched)
+5) **Growth Pass** (activation/retention/conversion + instrumentation opportunities)
+6) **Ops/Release Pass** (only if packaging/CLI/CI touched)
 
 If the change is purely docs, skip to Quality Pass.
 
@@ -242,6 +243,11 @@ Quality pass outputs:
 - Check a11y regressions (WCAG 2.2 mindset).
 - Check interaction latency (INP) and layout stability (CLS) basics.
 - Validate copy + empty states + error states.
+
+### Growth Pass
+- Identify concrete growth opportunities tied to changed flows (activation, retention, conversion).
+- Check measurement/instrumentation gaps that block product learning.
+- Propose testable next actions/hypotheses suitable for follow-up issue creation.
 
 ### Ops/Release Pass (only if packaging/CLI/CI touched)
 - Deterministic execution: prefer repo-local commands:

@@ -279,8 +279,15 @@ function summarizeSeverity(findings: ReviewFinding[]): Record<"P0" | "P1" | "P2"
   return counts;
 }
 
-function formatPassResult(pass: ReviewPassResult): string {
-  return `- ${pass.name}: ${pass.findings.length} finding(s)`;
+type PassFindingStats = {
+  name: ReviewPassResult["name"];
+  total: number;
+  unresolved: number;
+  resolved: number;
+};
+
+function formatPassResult(stats: PassFindingStats): string {
+  return `- ${stats.name}: total=${stats.total} unresolved=${stats.unresolved} resolved=${stats.resolved}`;
 }
 
 function formatFindingLine(finding: ReviewFinding): string {
@@ -298,6 +305,51 @@ function buildFindingsFingerprintKey(findings: ReviewFinding[]): string {
   return findings.map((finding) => computeFindingFingerprint(finding)).sort().join(",");
 }
 
+function dedupeFindingsByFingerprint(findings: ReviewFinding[]): ReviewFinding[] {
+  const deduped = new Map<string, ReviewFinding>();
+  for (const finding of findings) {
+    const fingerprint = computeFindingFingerprint(finding);
+    if (!deduped.has(fingerprint)) {
+      deduped.set(fingerprint, finding);
+    }
+  }
+  return Array.from(deduped.values());
+}
+
+function computeResolvedFindings(allFindings: ReviewFinding[], unresolvedFindings: ReviewFinding[]): ReviewFinding[] {
+  if (allFindings.length === 0) return [];
+  const unresolvedFingerprints = new Set(unresolvedFindings.map((finding) => computeFindingFingerprint(finding)));
+  return allFindings.filter((finding) => !unresolvedFingerprints.has(computeFindingFingerprint(finding)));
+}
+
+function buildPassFindingStats(
+  passResults: ReviewPassResult[],
+  allFindings: ReviewFinding[],
+  unresolvedFindings: ReviewFinding[],
+): PassFindingStats[] {
+  const totals = new Map<string, number>();
+  const unresolved = new Map<string, number>();
+
+  for (const finding of allFindings) {
+    totals.set(finding.pass, (totals.get(finding.pass) ?? 0) + 1);
+  }
+
+  for (const finding of unresolvedFindings) {
+    unresolved.set(finding.pass, (unresolved.get(finding.pass) ?? 0) + 1);
+  }
+
+  return passResults.map((pass) => {
+    const total = totals.get(pass.name) ?? 0;
+    const open = unresolved.get(pass.name) ?? 0;
+    return {
+      name: pass.name,
+      total,
+      unresolved: open,
+      resolved: Math.max(0, total - open),
+    };
+  });
+}
+
 function formatTermination(terminationReason: ReviewTerminationReason): string {
   if (terminationReason === "completed" || terminationReason === "max-attempts") {
     return terminationReason;
@@ -312,6 +364,8 @@ function buildOutcomeSummaryMarkdown(params: {
   attemptsUsed: number;
   maxAttempts: number;
   output: ReviewAgentOutput;
+  allFindings: ReviewFinding[];
+  resolvedFindings: ReviewFinding[];
   unresolvedFindings: ReviewFinding[];
   followUp: FollowUpIssue | null;
   provider: "command" | "codex" | "claude" | "gemini";
@@ -321,6 +375,7 @@ function buildOutcomeSummaryMarkdown(params: {
   providerHealedFromRuntime: "codex" | "claude" | "gemini" | null;
   terminationReason: ReviewTerminationReason;
 }): string {
+  const passStats = buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
   const severity = summarizeSeverity(params.unresolvedFindings);
   const lines = [
     "## vibe review",
@@ -331,7 +386,9 @@ function buildOutcomeSummaryMarkdown(params: {
     `- Run ID: ${params.output.run_id}`,
     `- Attempts: ${params.attemptsUsed}/${params.maxAttempts}`,
     `- Termination: ${formatTermination(params.terminationReason)}`,
+    `- Findings observed: ${params.allFindings.length}`,
     `- Unresolved findings: ${params.unresolvedFindings.length}`,
+    `- Resolved findings: ${params.resolvedFindings.length}`,
     `- Severity: P0=${severity.P0}, P1=${severity.P1}, P2=${severity.P2}, P3=${severity.P3}`,
   ];
   if (params.providerHealedFromRuntime) {
@@ -345,8 +402,8 @@ function buildOutcomeSummaryMarkdown(params: {
   }
 
   lines.push("", "### Pass Results");
-  for (const pass of params.output.passes) {
-    lines.push(formatPassResult(pass));
+  for (const passStat of passStats) {
+    lines.push(formatPassResult(passStat));
   }
 
   if (params.unresolvedFindings.length) {
@@ -356,6 +413,15 @@ function buildOutcomeSummaryMarkdown(params: {
     }
   } else {
     lines.push("", "### Unresolved Findings", "- none");
+  }
+
+  if (params.resolvedFindings.length) {
+    lines.push("", "### Resolved Findings");
+    for (const finding of params.resolvedFindings) {
+      lines.push(formatFindingLine(finding));
+    }
+  } else {
+    lines.push("", "### Resolved Findings", "- none");
   }
 
   return lines.join("\n");
@@ -483,6 +549,7 @@ export async function runReviewCommand(
     executionPlan.mode === "command" ? "command" : executionPlan.provider;
   let terminationReason: ReviewTerminationReason = "max-attempts";
   let previousFingerprintKey: string | null = null;
+  const allFindingsByFingerprint = new Map<string, ReviewFinding>();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attemptsUsed = attempt;
@@ -532,6 +599,12 @@ export async function runReviewCommand(
     }
 
     const findings = flattenReviewFindings(output);
+    for (const finding of findings) {
+      const fingerprint = computeFindingFingerprint(finding);
+      if (!allFindingsByFingerprint.has(fingerprint)) {
+        allFindingsByFingerprint.set(fingerprint, finding);
+      }
+    }
     if (!findings.length) {
       terminationReason = "completed";
       break;
@@ -564,7 +637,9 @@ export async function runReviewCommand(
     throw new Error("review: agent did not return any output.");
   }
 
-  const unresolvedFindings = flattenReviewFindings(finalOutput);
+  const unresolvedFindings = dedupeFindingsByFingerprint(flattenReviewFindings(finalOutput));
+  const allFindings = Array.from(allFindingsByFingerprint.values());
+  const resolvedFindings = computeResolvedFindings(allFindings, unresolvedFindings);
   let followUp: FollowUpIssue | null = null;
 
   const previewSummary = buildOutcomeSummaryMarkdown({
@@ -574,6 +649,8 @@ export async function runReviewCommand(
     attemptsUsed,
     maxAttempts,
     output: finalOutput,
+    allFindings,
+    resolvedFindings,
     unresolvedFindings,
     followUp: null,
     provider: providerRunner,
@@ -604,6 +681,8 @@ export async function runReviewCommand(
     attemptsUsed,
     maxAttempts,
     output: finalOutput,
+    allFindings,
+    resolvedFindings,
     unresolvedFindings,
     followUp,
     provider: providerRunner,

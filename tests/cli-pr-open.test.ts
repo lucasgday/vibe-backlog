@@ -40,6 +40,7 @@ function buildAgentOutput(runId: string, findingsCount = 0): string {
       { name: "security", summary: "ok", findings },
       { name: "quality", summary: "ok", findings: [] },
       { name: "ux", summary: "ok", findings: [] },
+      { name: "growth", summary: "ok", findings: [] },
       { name: "ops", summary: "ok", findings: [] },
     ],
     autofix: {

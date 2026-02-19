@@ -4,6 +4,7 @@ import { resolveRepoNameWithOwner } from "./review-pr";
 
 type ExecaFn = typeof execa;
 type JsonRecord = Record<string, unknown>;
+const EXTERNAL_AUTOMATION_AUTHORS = new Set(["chatgpt-codex-connector", "chatgpt-codex-connector[bot]"]);
 
 const REVIEW_THREADS_QUERY = [
   "query($owner:String!, $repo:String!, $pr:Int!, $after:String){",
@@ -308,9 +309,27 @@ function isManagedAutomationReply(body: string | null): boolean {
   return body.includes("Resolved via `vibe review threads resolve`.");
 }
 
+function normalizeAuthorLogin(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function isExternalAutomationAuthor(login: string | null): boolean {
+  const normalized = normalizeAuthorLogin(login);
+  if (!normalized) return false;
+  return EXTERNAL_AUTOMATION_AUTHORS.has(normalized);
+}
+
 function isVibeManagedThread(thread: ReviewThread): boolean {
   const firstComment = thread.comments[0];
-  if (!firstComment || extractFingerprint(firstComment.body) === null) {
+  if (!firstComment) {
+    return false;
+  }
+
+  const firstIsVibeFingerprint = extractFingerprint(firstComment.body) !== null;
+  const firstIsExternalAutomation = isExternalAutomationAuthor(firstComment.authorLogin);
+  if (!firstIsVibeFingerprint && !firstIsExternalAutomation) {
     return false;
   }
 
@@ -318,7 +337,7 @@ function isVibeManagedThread(thread: ReviewThread): boolean {
   // only auto-resolve threads whose additional replies are managed automation replies.
   for (let index = 1; index < thread.comments.length; index += 1) {
     const comment = thread.comments[index];
-    if (!isManagedAutomationReply(comment?.body ?? null)) {
+    if (!isManagedAutomationReply(comment?.body ?? null) && !isExternalAutomationAuthor(comment?.authorLogin ?? null)) {
       return false;
     }
   }

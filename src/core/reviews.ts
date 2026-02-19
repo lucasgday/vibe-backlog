@@ -86,6 +86,23 @@ const REVIEW_TEMPLATES: readonly ReviewTemplate[] = [
 `,
   },
   {
+    fileName: "growth.md",
+    content: `# Growth Pass
+
+## Review Focus
+- Funnel stage(s) touched:
+- Instrumentation/experiment impact:
+
+## Checklist
+- [ ] Activation/retention/conversion opportunities reviewed
+- [ ] Measurement gaps and hypotheses captured
+- [ ] Next growth actions are concrete and testable
+
+## Notes
+- 
+`,
+  },
+  {
     fileName: "ops.md",
     content: `# Ops Pass
 

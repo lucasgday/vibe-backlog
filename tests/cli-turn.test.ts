@@ -96,7 +96,9 @@ describe.sequential("cli turn start", () => {
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "fetch" && args[1] === "origin",
       ),
     ).toBe(true);
-    expect(logs.some((line) => line.includes("review templates: created 5 file(s)"))).toBe(true);
+    expect(logs.some((line) => line.includes(`review templates: created ${REVIEW_TEMPLATE_FILE_NAMES.length} file(s)`))).toBe(
+      true,
+    );
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -153,7 +155,9 @@ describe.sequential("cli turn start", () => {
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "checkout" && args[1] === "-b",
       ),
     ).toBe(true);
-    expect(logs.some((line) => line.includes("review templates: created 5 file(s)"))).toBe(true);
+    expect(logs.some((line) => line.includes(`review templates: created ${REVIEW_TEMPLATE_FILE_NAMES.length} file(s)`))).toBe(
+      true,
+    );
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -210,7 +214,9 @@ describe.sequential("cli turn start", () => {
         ([cmd, args]) => cmd === "git" && Array.isArray(args) && args[0] === "checkout" && args[1] === "-b",
       ),
     ).toBe(true);
-    expect(logs.some((line) => line.includes("review templates: created 5 file(s)"))).toBe(true);
+    expect(logs.some((line) => line.includes(`review templates: created ${REVIEW_TEMPLATE_FILE_NAMES.length} file(s)`))).toBe(
+      true,
+    );
     expect(process.exitCode).toBeUndefined();
   });
 
