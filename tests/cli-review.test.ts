@@ -732,6 +732,10 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Unresolved findings: 0"))).toBe(true);
     expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
     expect(logs.some((line) => line.includes("Findings totals scope: lifecycle"))).toBe(true);
+    expect(logs.some((line) => line.includes("Detailed pass/finding sections omitted in lifecycle totals mode."))).toBe(true);
+    expect(logs.some((line) => line.includes("### Pass Results"))).toBe(false);
+    expect(logs.some((line) => line.includes("### Resolved Findings"))).toBe(false);
+    expect(logs.some((line) => line.includes("### Unresolved Findings"))).toBe(false);
     expect(logs.some((line) => line.includes("review: findings_totals_source=lifecycle"))).toBe(true);
   });
 
@@ -823,6 +827,8 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("Findings observed: 2"))).toBe(true);
     expect(logs.some((line) => line.includes("Unresolved findings: 1"))).toBe(true);
     expect(logs.some((line) => line.includes("Resolved findings: 1"))).toBe(true);
+    expect(logs.some((line) => line.includes("Findings totals scope: lifecycle"))).toBe(true);
+    expect(logs.some((line) => line.includes("### Pass Results"))).toBe(false);
   });
 
   it("dedupes connector-managed lifecycle threads when current-run finding uses absolute file path", async () => {
