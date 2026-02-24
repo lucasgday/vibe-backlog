@@ -14,12 +14,19 @@ export type CreateIssueWithBodyFileParams = {
   milestoneTitle?: string | null;
 };
 
+function logIssueCreateMode(params: CreateIssueWithBodyFileParams): void {
+  const labelCount = params.labels?.length ?? 0;
+  const milestone = params.milestoneTitle ? "yes" : "no";
+  console.log(`issue create: mode=body_file labels=${labelCount} milestone=${milestone}`);
+}
+
 export async function createIssueWithBodyFile(params: CreateIssueWithBodyFileParams) {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "vibe-issue-body-"));
   const bodyFilePath = path.join(tempDir, "body.md");
 
   try {
     await writeFile(bodyFilePath, params.body, "utf8");
+    logIssueCreateMode(params);
 
     const args = ["issue", "create", "--title", params.title, "--body-file", bodyFilePath];
     for (const label of params.labels ?? []) {
