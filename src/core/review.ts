@@ -532,7 +532,8 @@ function buildOutcomeSummaryMarkdown(params: {
   severityTotals: SeverityCounts;
   reviewPolicy: ReviewPolicySummary;
 }): string {
-  const passStats = buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
+  const lifecycleSummary = params.findingTotals.source === "lifecycle";
+  const passStats = lifecycleSummary ? [] : buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
   const lines = [
     "## vibe review",
     `- Issue: #${params.issueId} ${params.issueTitle}`,
@@ -552,6 +553,7 @@ function buildOutcomeSummaryMarkdown(params: {
   ];
   if (params.findingTotals.source === "lifecycle") {
     lines.push("- Findings totals scope: lifecycle (PR threads + current run)");
+    lines.push("- Detailed pass/finding sections omitted in lifecycle totals mode.");
   }
   if (params.findingTotals.warning) {
     lines.push(`- Findings totals warning: ${params.findingTotals.warning}`);
@@ -583,27 +585,29 @@ function buildOutcomeSummaryMarkdown(params: {
     }
   }
 
-  lines.push("", "### Pass Results");
-  for (const passStat of passStats) {
-    lines.push(formatPassResult(passStat));
-  }
-
-  if (params.unresolvedFindings.length) {
-    lines.push("", "### Unresolved Findings");
-    for (const finding of params.unresolvedFindings) {
-      lines.push(formatFindingLine(finding));
+  if (!lifecycleSummary) {
+    lines.push("", "### Pass Results");
+    for (const passStat of passStats) {
+      lines.push(formatPassResult(passStat));
     }
-  } else {
-    lines.push("", "### Unresolved Findings", "- none");
-  }
 
-  if (params.resolvedFindings.length) {
-    lines.push("", "### Resolved Findings");
-    for (const finding of params.resolvedFindings) {
-      lines.push(formatFindingLine(finding));
+    if (params.unresolvedFindings.length) {
+      lines.push("", "### Unresolved Findings");
+      for (const finding of params.unresolvedFindings) {
+        lines.push(formatFindingLine(finding));
+      }
+    } else {
+      lines.push("", "### Unresolved Findings", "- none");
     }
-  } else {
-    lines.push("", "### Resolved Findings", "- none");
+
+    if (params.resolvedFindings.length) {
+      lines.push("", "### Resolved Findings");
+      for (const finding of params.resolvedFindings) {
+        lines.push(formatFindingLine(finding));
+      }
+    } else {
+      lines.push("", "### Resolved Findings", "- none");
+    }
   }
 
   return lines.join("\n");
