@@ -36,3 +36,15 @@ No new injection, authz, or data exposure risks were introduced; command executi
 
 ### Findings
 - none
+
+## Run 2026-02-24T15:38:07.607Z
+- run_id: issue-75-pr-76-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new injection or data exposure risks were introduced. The helper still uses argument arrays for `gh`, writes the body to a temp file, and removes the temp directory in a `finally` block.
+
+### Findings
+- none

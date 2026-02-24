@@ -35,3 +35,15 @@ The change improves issue readability and workflow trust, but there is no measur
 
 ### Findings
 - [P3] Missing instrumentation for issue-creation policy adherence (src/core/gh-issue.ts:17)
+
+## Run 2026-02-24T15:38:07.609Z
+- run_id: issue-75-pr-76-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The prior instrumentation gap is addressed with a lightweight structured signal (`issue create: mode=body_file ...`) plus tests asserting the emitted mode, which supports future adherence monitoring without expanding scope significantly.
+
+### Findings
+- none

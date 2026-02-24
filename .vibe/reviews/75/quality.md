@@ -41,3 +41,15 @@ Helper-level tests are solid, but policy-level regression protection is not yet 
 
 ### Findings
 - [P2] Policy regression coverage does not guard all future issue-create paths (tests/gh-issue.test.ts:11)
+
+## Run 2026-02-24T15:38:07.608Z
+- run_id: issue-75-pr-76-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Coverage is now materially stronger for the #75 policy: helper behavior is tested (success and failure cleanup), a policy audit test scans `src/core` issue-create literals for `--body-file`, and tests/build pass.
+
+### Findings
+- none
