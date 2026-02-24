@@ -81,8 +81,12 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
-    expect(policyKey).toBe("v1;autofix=1;autopush=1;publish=1;strict=0;max_attempts=5");
+    expect(policyKey).toBe(
+      "v2;autofix=1;autopush=1;publish=1;strict=0;max_attempts=5;compute_class=l3-deep;pass_profile=full",
+    );
   });
 
   it("embeds policy marker in review summary body when provided", () => {
@@ -92,6 +96,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     const summary = buildReviewSummaryBody("summary text", "abc123def", { policyKey });
     expect(summary).toContain(`${REVIEW_POLICY_MARKER_PREFIX}${policyKey} -->`);
@@ -125,6 +131,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey })).toBe(true);
   });
@@ -136,6 +144,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     const mismatchedPolicyKey = buildReviewPolicyKey({
       autofix: false,
@@ -143,6 +153,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     const summaryBody = buildReviewSummaryBody("summary", "abc123def", { policyKey: mismatchedPolicyKey });
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
@@ -164,6 +176,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     const mismatchedPolicyKey = buildReviewPolicyKey({
       autofix: false,
@@ -171,6 +185,8 @@ describe("review PR helpers", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L3-deep",
+      passProfile: "full",
     });
     const legacyBody = buildReviewSummaryBody("legacy summary", "abc123def");
     const policyBody = buildReviewSummaryBody("policy summary", "abc123def", { policyKey: mismatchedPolicyKey });
@@ -189,6 +205,46 @@ describe("review PR helpers", () => {
     expect(await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", { policyKey: matchingPolicyKey })).toBe(
       false,
     );
+  });
+
+  it("ignores pass_profile mismatch when requested", async () => {
+    const gatePolicyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+      computeClass: "L2-standard",
+      passProfile: "full",
+    });
+    const docsOnlyPolicyKey = buildReviewPolicyKey({
+      autofix: true,
+      autopush: true,
+      publish: true,
+      strict: false,
+      maxAttempts: 5,
+      computeClass: "L2-standard",
+      passProfile: "docs-only",
+    });
+    const summaryBody = buildReviewSummaryBody("summary", "abc123def", { policyKey: docsOnlyPolicyKey });
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
+        return { stdout: JSON.stringify([{ id: 1, body: summaryBody }]) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    expect(
+      await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", {
+        policyKey: gatePolicyKey,
+        ignorePassProfile: true,
+      }),
+    ).toBe(true);
+    expect(
+      await hasReviewForHead(execaMock as never, "acme/demo", 99, "abc123def", {
+        policyKey: gatePolicyKey,
+      }),
+    ).toBe(false);
   });
 
   it("posts review gate skip comment once per head marker", async () => {

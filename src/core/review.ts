@@ -31,6 +31,12 @@ import {
 import { ensureIssueReviewTemplates, getIssueReviewDirectory } from "./reviews";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
+import {
+  resolveReviewExecutionPolicy,
+  type ReviewFlowKind,
+  type ReviewPassProfile,
+  type ReviewComputeClass,
+} from "./review-policy";
 
 export const REVIEW_NO_ACTIVE_TURN_EXIT_CODE = 2;
 export const REVIEW_INVALID_TURN_EXIT_CODE = 3;
@@ -58,6 +64,8 @@ export type ReviewCommandOptions = {
   maxAttempts: number;
   strict: boolean;
   followupLabel: "bug" | "enhancement" | null;
+  computeClass?: string | null;
+  flowKind?: ReviewFlowKind;
 };
 
 export type ReviewCommandResult = {
@@ -83,6 +91,10 @@ export type ReviewCommandResult = {
   threadResolutionWarning: string | null;
   findingTotalsSource: "current-run" | "lifecycle";
   findingTotalsWarning: string | null;
+  computeClass: ReviewComputeClass;
+  passProfile: ReviewPassProfile;
+  skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
+  agentInvocationRetryBudget: number;
 };
 
 type ReviewRunContext = {
@@ -106,6 +118,14 @@ type ReviewFindingTotals = {
 };
 
 type SeverityCounts = Record<"P0" | "P1" | "P2" | "P3", number>;
+
+type ReviewPolicySummary = {
+  computeClass: ReviewComputeClass;
+  passProfile: ReviewPassProfile;
+  activePasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
+  skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
+  agentInvocationRetryBudget: number;
+};
 
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
   if (value === undefined || value === null || value === "") return null;
@@ -510,6 +530,7 @@ function buildOutcomeSummaryMarkdown(params: {
   terminationReason: ReviewTerminationReason;
   findingTotals: ReviewFindingTotals;
   severityTotals: SeverityCounts;
+  reviewPolicy: ReviewPolicySummary;
 }): string {
   const passStats = buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
   const lines = [
@@ -521,6 +542,9 @@ function buildOutcomeSummaryMarkdown(params: {
     `- Run ID: ${params.output.run_id}`,
     `- Attempts: ${params.attemptsUsed}/${params.maxAttempts}`,
     `- Termination: ${formatTermination(params.terminationReason)}`,
+    `- Compute class: ${params.reviewPolicy.computeClass}`,
+    `- Pass profile: ${params.reviewPolicy.passProfile}`,
+    `- Agent invocation retry budget: ${params.reviewPolicy.agentInvocationRetryBudget}`,
     `- Findings observed: ${params.findingTotals.observed}`,
     `- Unresolved findings: ${params.findingTotals.unresolved}`,
     `- Resolved findings: ${params.findingTotals.resolved}`,
@@ -534,6 +558,10 @@ function buildOutcomeSummaryMarkdown(params: {
   }
   if (params.providerHealedFromRuntime) {
     lines.push(`- Provider auto-heal: ${params.providerHealedFromRuntime} -> ${params.provider}`);
+  }
+  if (params.reviewPolicy.skippedPasses.length) {
+    lines.push(`- Active passes: ${params.reviewPolicy.activePasses.join(", ")}`);
+    lines.push(`- Skipped passes: ${params.reviewPolicy.skippedPasses.join(", ")}`);
   }
 
   if (params.followUp?.url) {
@@ -640,13 +668,7 @@ export async function runReviewCommand(
   execaFn: ExecaFn = execa,
 ): Promise<ReviewCommandResult> {
   const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
-  const reviewPolicyKey = buildReviewPolicyKey({
-    autofix: options.autofix,
-    autopush: options.autopush,
-    publish: options.publish,
-    strict: options.strict,
-    maxAttempts,
-  });
+  const flowKind = options.flowKind ?? "review";
 
   const context = await resolveReviewRunContext(
     execaFn,
@@ -681,6 +703,21 @@ export async function runReviewCommand(
   }
 
   const issue = await fetchIssueSnapshot(execaFn, context.issueId);
+  const executionPolicy = resolveReviewExecutionPolicy({
+    flow: flowKind,
+    computeClassOverride: options.computeClass,
+    issueTitle: issue.title,
+    issueLabels: issue.labels,
+  });
+  const reviewPolicyKey = buildReviewPolicyKey({
+    autofix: options.autofix,
+    autopush: options.autopush,
+    publish: options.publish,
+    strict: options.strict,
+    maxAttempts,
+    computeClass: executionPolicy.computeClass,
+    passProfile: executionPolicy.passProfile,
+  });
   const repo = await resolveRepoNameWithOwner(execaFn);
   const pr = await resolveOrCreateReviewPullRequest({
     execaFn,
@@ -711,6 +748,9 @@ export async function runReviewCommand(
     const run = await runReviewAgent({
       execaFn,
       plan: executionPlan,
+      invocationRetry: {
+        maxInvocations: executionPolicy.agentInvocationRetryBudget,
+      },
       input: {
         version: 1,
         workspace_root: process.cwd(),
@@ -730,6 +770,13 @@ export async function runReviewCommand(
         max_attempts: maxAttempts,
         autofix: options.autofix,
         passes: REVIEW_PASS_ORDER,
+        review_policy: {
+          compute_class: executionPolicy.computeClass,
+          pass_profile: executionPolicy.passProfile,
+          active_passes: executionPolicy.activePasses,
+          skipped_passes: executionPolicy.skippedPasses,
+          agent_invocation_retry_budget: executionPolicy.agentInvocationRetryBudget,
+        },
       },
     });
 
@@ -830,6 +877,7 @@ export async function runReviewCommand(
     terminationReason,
     findingTotals: currentRunFindingTotals,
     severityTotals: currentRunSeverityTotals,
+    reviewPolicy: executionPolicy,
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
@@ -970,6 +1018,7 @@ export async function runReviewCommand(
     terminationReason,
     findingTotals,
     severityTotals,
+    reviewPolicy: executionPolicy,
   });
 
   if (!options.dryRun) {
@@ -1032,5 +1081,9 @@ export async function runReviewCommand(
     threadResolutionWarning,
     findingTotalsSource: findingTotals.source,
     findingTotalsWarning: findingTotals.warning,
+    computeClass: executionPolicy.computeClass,
+    passProfile: executionPolicy.passProfile,
+    skippedPasses: executionPolicy.skippedPasses,
+    agentInvocationRetryBudget: executionPolicy.agentInvocationRetryBudget,
   };
 }

@@ -268,8 +268,18 @@ Options:
 - `--no-autopush`: disable final auto commit/push.
 - `--no-publish`: skip PR summary/review/inline publication.
 - `--max-attempts <n>`: max retry attempts (default `5`).
+- `--compute-class <L1-fast|L2-standard|L3-deep|L4-critical>`: policy preset for agent invocation retry resilience + conservative pruning.
 - `--strict`: exit non-zero when unresolved findings remain after final attempt.
 - `--followup-label bug|enhancement`: override follow-up issue label.
+
+Compute class notes:
+
+- `--compute-class` does **not** change `--max-attempts` (findings/autofix loop).
+- It controls retry resilience for agent invocation failures (timeouts/transient provider errors) inside a single review attempt.
+- It can activate conservative `docs-only` pruning; output still includes all 6 passes, and pruned passes are emitted as `skipped by policy`.
+- Defaults:
+  - `vibe review` manual: `L3-deep`
+  - `vibe pr open` auto-review gate: `L2-standard`
 
 Issue/base context resolution (without requiring an active turn):
 
@@ -312,6 +322,11 @@ Codex same-session behavior:
 - If resume fails or returns invalid JSON, it falls back to external non-interactive Codex execution.
 - This is best-effort only; resume unavailability does not fail the run by itself.
 
+Review policy marker:
+
+- Review summary comments embed a `v2` policy marker that includes core review flags plus `compute_class` and `pass_profile`.
+- `pr open` / `pr ready` preserve legacy marker compatibility and can ignore `pass_profile` differences for gate dedupe in the MVP.
+
 ## `vibe pr open` command reference
 
 ```bash
@@ -334,7 +349,7 @@ Review gate behavior:
 - Progressive compatibility:
   - legacy summary comments without policy marker still satisfy gate for matching HEAD.
   - if policy marker exists, `pr open` requires `HEAD + policy` match.
-- If marker is missing, `pr open` auto-runs `vibe review` (full profile, non-strict).
+- If marker is missing, `pr open` auto-runs `vibe review` (L2-standard profile, non-strict).
 - If `--force-review` is set, `pr open` reruns `vibe review` even when gate markers already match.
 - For non-dry-run gate execution, target branch must be checked out before auto-review can run.
 - If `--skip-review-gate` is set, no auto-review runs; PR receives `<!-- vibe:review-gate-skipped -->`.

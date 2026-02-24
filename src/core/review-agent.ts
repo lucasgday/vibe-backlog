@@ -90,12 +90,22 @@ export type ReviewAgentInput = {
   max_attempts: number;
   autofix: boolean;
   passes: readonly ReviewPassName[];
+  review_policy?: {
+    compute_class: string;
+    pass_profile: string;
+    active_passes: readonly ReviewPassName[];
+    skipped_passes: readonly ReviewPassName[];
+    agent_invocation_retry_budget: number;
+  };
 };
 
 export type RunReviewAgentParams = {
   execaFn: ExecaFn;
   plan: ReviewAgentExecutionPlan;
   input: ReviewAgentInput;
+  invocationRetry?: {
+    maxInvocations: number;
+  };
 };
 
 export type RunReviewAgentResult = {
@@ -111,6 +121,8 @@ type ClaudeOrGeminiExecutionPlan = ProviderExecutionPlan & { provider: "claude" 
 
 function buildProviderPrompt(input: ReviewAgentInput): string {
   const passEnum = REVIEW_PASS_ORDER.join("|");
+  const activePassList = input.review_policy?.active_passes?.join(", ") || REVIEW_PASS_ORDER.join(", ");
+  const skippedPassList = input.review_policy?.skipped_passes?.join(", ") || "none";
   const instructions = [
     "You are a code review pass runner.",
     "Pass guidance:",
@@ -122,6 +134,10 @@ function buildProviderPrompt(input: ReviewAgentInput): string {
     "- growth: identify product growth opportunities (activation, retention, conversion, instrumentation, experiment gaps) grounded in evidence from the diff/context.",
     "- growth: each finding should include a concrete next action suitable for a follow-up issue.",
     "- Treat `.vibe/reviews/<issue>/*.md` and `.vibe/artifacts/postflight.json` as expected review artifacts; do not flag them as unplanned/unexpected by themselves.",
+    `- Active passes for this run (policy): ${activePassList}.`,
+    `- Skipped passes for this run (policy): ${skippedPassList}.`,
+    "- Output MUST still include all 6 passes exactly once.",
+    '- For any pass skipped by policy, return summary="skipped by policy" and findings=[].',
     "- keep severities strictly in P0|P1|P2|P3.",
     "Return ONLY a JSON object (no markdown) matching this schema:",
     `{"version":1,"run_id":"string","passes":[{"name":"${passEnum}","summary":"string","findings":[{"id":"string","pass":"${passEnum}","severity":"P0|P1|P2|P3","title":"string","body":"string","file":"string|null","line":1,"kind":"defect|regression|security|improvement|docs|refactor|test|null"}]}],"autofix":{"applied":true,"summary":"string|null","changed_files":["string"]}}`,
@@ -130,6 +146,71 @@ function buildProviderPrompt(input: ReviewAgentInput): string {
     JSON.stringify(input, null, 2),
   ];
   return instructions.join("\n");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const execaError = error as Error & {
+    stderr?: unknown;
+    stdout?: unknown;
+    shortMessage?: unknown;
+    message?: unknown;
+  };
+  const parts: string[] = [];
+  if (typeof execaError.message === "string" && execaError.message.trim()) parts.push(execaError.message);
+  if (typeof execaError.shortMessage === "string" && execaError.shortMessage.trim()) parts.push(execaError.shortMessage);
+  if (typeof execaError.stderr === "string" && execaError.stderr.trim()) parts.push(execaError.stderr);
+  if (typeof execaError.stdout === "string" && execaError.stdout.trim()) parts.push(execaError.stdout);
+  return parts.join("\n");
+}
+
+function isRetryableReviewAgentInvocationError(error: unknown): boolean {
+  const text = errorText(error).toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("timeout") ||
+    text.includes("timed out") ||
+    text.includes("connection reset") ||
+    text.includes("temporary failure") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("rate limit") ||
+    /\b429\b/.test(text) ||
+    /\b502\b/.test(text) ||
+    /\b503\b/.test(text) ||
+    /\b504\b/.test(text)
+  );
+}
+
+async function runWithInvocationRetry<T>(
+  fn: () => Promise<T>,
+  policy?: { maxInvocations: number },
+): Promise<T> {
+  const maxInvocations = Math.max(1, Math.trunc(policy?.maxInvocations ?? 1));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxInvocations; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const canRetry = attempt < maxInvocations && isRetryableReviewAgentInvocationError(error);
+      if (!canRetry) {
+        throw error;
+      }
+      const delayMs = Math.min(250 * attempt, 750);
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  throw lastError ?? new Error("review agent invocation failed");
 }
 
 function parseJsonCandidate(value: string): unknown | null {
@@ -314,6 +395,7 @@ export async function runReviewAgent(params: RunReviewAgentParams): Promise<RunR
     if (!command) {
       throw new Error("review agent command is required");
     }
+    // Generic command-mode agents may be side-effectful; avoid retrying and accidentally rerunning them.
     const stdout = await runShellCommand(params.execaFn, command, `${JSON.stringify(params.input)}\n`);
     return {
       output: parseReviewAgentOutputFromText(stdout),
@@ -325,11 +407,15 @@ export async function runReviewAgent(params: RunReviewAgentParams): Promise<RunR
 
   const prompt = buildProviderPrompt(params.input);
   if (params.plan.provider === "codex") {
-    const result = await runCodexProvider({
-      execaFn: params.execaFn,
-      plan: params.plan as CodexExecutionPlan,
-      prompt,
-    });
+    const result = await runWithInvocationRetry(
+      () =>
+        runCodexProvider({
+          execaFn: params.execaFn,
+          plan: params.plan as CodexExecutionPlan,
+          prompt,
+        }),
+      params.invocationRetry,
+    );
     return {
       output: parseReviewAgentOutputFromText(result.stdout),
       resumeAttempted: result.resumeAttempted,
@@ -339,11 +425,15 @@ export async function runReviewAgent(params: RunReviewAgentParams): Promise<RunR
   }
 
   if (params.plan.provider === "claude" || params.plan.provider === "gemini") {
-    const stdout = await runClaudeOrGeminiProvider({
-      execaFn: params.execaFn,
-      plan: params.plan as ClaudeOrGeminiExecutionPlan,
-      prompt,
-    });
+    const stdout = await runWithInvocationRetry(
+      () =>
+        runClaudeOrGeminiProvider({
+          execaFn: params.execaFn,
+          plan: params.plan as ClaudeOrGeminiExecutionPlan,
+          prompt,
+        }),
+      params.invocationRetry,
+    );
     return {
       output: parseReviewAgentOutputFromText(stdout),
       resumeAttempted: false,

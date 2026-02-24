@@ -144,6 +144,22 @@ describe.sequential("cli review", () => {
     expect(execaMock).not.toHaveBeenCalled();
   });
 
+  it("fails with exit 1 on invalid --compute-class", async () => {
+    const errors: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--compute-class", "L9-ultra"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("--compute-class must be one of"))).toBe(true);
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
   it("returns exit code 3 when turn.json is malformed", async () => {
     const turnPath = getTurnContextPath();
     mkdirSync(path.dirname(turnPath), { recursive: true });
@@ -191,6 +207,110 @@ describe.sequential("cli review", () => {
 
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("review: issue=#42"))).toBe(true);
+  });
+
+  it("retries transient provider invocation errors with compute-class policy", async () => {
+    process.env.VIBE_REVIEW_CODEX_CMD = "cat";
+
+    let agentRuns = 0;
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "retry policy", url: "https://example.test/issues/42", milestone: null, labels: [] }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") {
+        agentRuns += 1;
+        if (agentRuns === 1) {
+          const error = new Error("provider timed out");
+          (error as Error & { stderr?: string }).stderr = "timeout while waiting for provider";
+          throw error;
+        }
+        return { stdout: buildAgentOutput({ runId: "run-transient-retry", findingsCount: 0 }) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync([
+      "node",
+      "vibe",
+      "review",
+      "--dry-run",
+      "--issue",
+      "42",
+      "--agent-provider",
+      "codex",
+      "--compute-class",
+      "L2-standard",
+      "--no-publish",
+      "--no-autopush",
+    ]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(agentRuns).toBe(2);
+    expect(logs.some((line) => line.includes("review: policy compute_class=L2-standard"))).toBe(true);
+    expect(logs.some((line) => line.includes("agent_retry_budget=2"))).toBe(true);
+  });
+
+  it("sends all six passes to command agents while carrying docs-only pruning policy metadata", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    let capturedAgentInput: Record<string, unknown> | null = null;
+    const execaMock = vi.fn(async (cmd: string, args: string[], options?: Record<string, unknown>) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/docs-only\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "docs: update review policy docs",
+            url: "https://example.test/issues/42",
+            milestone: null,
+            labels: [{ name: "module:docs" }],
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") {
+        capturedAgentInput = JSON.parse(String(options?.input ?? "").trim()) as Record<string, unknown>;
+        return { stdout: buildAgentOutput({ runId: "run-docs-policy", findingsCount: 0 }) };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync([
+      "node",
+      "vibe",
+      "review",
+      "--dry-run",
+      "--issue",
+      "42",
+      "--compute-class",
+      "L3-deep",
+      "--no-publish",
+      "--no-autopush",
+    ]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(capturedAgentInput).not.toBeNull();
+    const passes = (capturedAgentInput?.passes ?? []) as string[];
+    expect(passes).toHaveLength(6);
+    expect(passes).toContain("ux");
+    expect(passes).toContain("growth");
+    const reviewPolicy = (capturedAgentInput?.review_policy ?? {}) as Record<string, unknown>;
+    expect(reviewPolicy.pass_profile).toBe("docs-only");
+    expect(reviewPolicy.active_passes).toEqual(["implementation", "security", "quality", "ops"]);
+    expect(reviewPolicy.skipped_passes).toEqual(["ux", "growth"]);
   });
 
   it("infers issue id from branch name when no turn exists", async () => {

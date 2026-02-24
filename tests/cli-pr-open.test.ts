@@ -14,6 +14,8 @@ const PR_OPEN_POLICY_KEY = buildReviewPolicyKey({
   publish: true,
   strict: false,
   maxAttempts: 5,
+  computeClass: "L2-standard",
+  passProfile: "full",
 });
 
 function buildAgentOutput(runId: string, findingsCount = 0): string {
@@ -619,6 +621,8 @@ describe.sequential("cli pr open", () => {
       publish: true,
       strict: false,
       maxAttempts: 5,
+      computeClass: "L2-standard",
+      passProfile: "full",
     });
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
