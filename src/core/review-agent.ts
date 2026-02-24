@@ -395,10 +395,8 @@ export async function runReviewAgent(params: RunReviewAgentParams): Promise<RunR
     if (!command) {
       throw new Error("review agent command is required");
     }
-    const stdout = await runWithInvocationRetry(
-      () => runShellCommand(params.execaFn, command, `${JSON.stringify(params.input)}\n`),
-      params.invocationRetry,
-    );
+    // Generic command-mode agents may be side-effectful; avoid retrying and accidentally rerunning them.
+    const stdout = await runShellCommand(params.execaFn, command, `${JSON.stringify(params.input)}\n`);
     return {
       output: parseReviewAgentOutputFromText(stdout),
       resumeAttempted: false,

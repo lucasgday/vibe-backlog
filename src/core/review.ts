@@ -769,7 +769,7 @@ export async function runReviewCommand(
         attempt,
         max_attempts: maxAttempts,
         autofix: options.autofix,
-        passes: executionPolicy.activePasses,
+        passes: REVIEW_PASS_ORDER,
         review_policy: {
           compute_class: executionPolicy.computeClass,
           pass_profile: executionPolicy.passProfile,

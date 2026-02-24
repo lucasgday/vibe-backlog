@@ -175,7 +175,49 @@ describe("review agent schema", () => {
     expect(capturedPrompt).toContain("Output MUST still include all 6 passes exactly once");
   });
 
-  it("retries transient command invocation errors within the same attempt", async () => {
+  it("does not retry transient invocation errors in command mode", async () => {
+    let invocations = 0;
+    const execaMock = vi.fn(async () => {
+      invocations += 1;
+      const error = new Error("request timed out");
+      (error as Error & { stderr?: string }).stderr = "timeout while waiting for provider";
+      throw error;
+    });
+
+    await expect(
+      runReviewAgent({
+        execaFn: execaMock as never,
+        invocationRetry: { maxInvocations: 2 },
+        plan: {
+          mode: "command",
+          provider: "command",
+          source: "flag",
+          command: "cat",
+          runtimePath: "/tmp/review-provider.json",
+          autoMode: false,
+          resumeThreadId: null,
+          healedFromRuntime: null,
+        },
+        input: {
+          version: 1,
+          workspace_root: "/tmp/repo",
+          repo: "acme/demo",
+          issue: { id: 34, title: "review command", url: null },
+          branch: "codex/issue-34-vibe-review",
+          base_branch: "main",
+          pr: { number: 99, url: null },
+          attempt: 1,
+          max_attempts: 5,
+          autofix: true,
+          passes: REVIEW_PASS_ORDER,
+        },
+      }),
+    ).rejects.toThrow(/timed out|timeout/i);
+
+    expect(invocations).toBe(1);
+  });
+
+  it("retries transient provider invocation errors within the same attempt", async () => {
     let invocations = 0;
     const execaMock = vi.fn(async () => {
       invocations += 1;
@@ -187,7 +229,7 @@ describe("review agent schema", () => {
       return {
         stdout: JSON.stringify({
           version: 1,
-          run_id: "run-retry-ok",
+          run_id: "run-provider-retry-ok",
           passes: REVIEW_PASS_ORDER.map((name) => ({ name, summary: "ok", findings: [] })),
           autofix: { applied: false, changed_files: [] },
         }),
@@ -198,12 +240,13 @@ describe("review agent schema", () => {
       execaFn: execaMock as never,
       invocationRetry: { maxInvocations: 2 },
       plan: {
-        mode: "command",
-        provider: "command",
-        source: "flag",
-        command: "cat",
+        mode: "provider",
+        provider: "codex",
+        source: "env",
+        providerBinary: "codex",
+        providerCommandOverride: null,
         runtimePath: "/tmp/review-provider.json",
-        autoMode: false,
+        autoMode: true,
         resumeThreadId: null,
         healedFromRuntime: null,
       },
@@ -222,7 +265,7 @@ describe("review agent schema", () => {
       },
     });
 
-    expect(result.output.run_id).toBe("run-retry-ok");
+    expect(result.output.run_id).toBe("run-provider-retry-ok");
     expect(invocations).toBe(2);
   });
 
