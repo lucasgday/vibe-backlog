@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { flattenReviewFindings, REVIEW_PASS_ORDER, ReviewAgentOutputSchema, runReviewAgent } from "../src/core/review-agent";
 
@@ -171,5 +171,99 @@ describe("review agent schema", () => {
     expect(result.output.run_id).toBe("run-provider");
     expect(capturedPrompt).toContain(".vibe/reviews/<issue>/*.md");
     expect(capturedPrompt).toContain(".vibe/artifacts/postflight.json");
+    expect(capturedPrompt).toContain('summary="skipped by policy"');
+    expect(capturedPrompt).toContain("Output MUST still include all 6 passes exactly once");
+  });
+
+  it("retries transient command invocation errors within the same attempt", async () => {
+    let invocations = 0;
+    const execaMock = vi.fn(async () => {
+      invocations += 1;
+      if (invocations === 1) {
+        const error = new Error("request timed out");
+        (error as Error & { stderr?: string }).stderr = "timeout while waiting for provider";
+        throw error;
+      }
+      return {
+        stdout: JSON.stringify({
+          version: 1,
+          run_id: "run-retry-ok",
+          passes: REVIEW_PASS_ORDER.map((name) => ({ name, summary: "ok", findings: [] })),
+          autofix: { applied: false, changed_files: [] },
+        }),
+      };
+    });
+
+    const result = await runReviewAgent({
+      execaFn: execaMock as never,
+      invocationRetry: { maxInvocations: 2 },
+      plan: {
+        mode: "command",
+        provider: "command",
+        source: "flag",
+        command: "cat",
+        runtimePath: "/tmp/review-provider.json",
+        autoMode: false,
+        resumeThreadId: null,
+        healedFromRuntime: null,
+      },
+      input: {
+        version: 1,
+        workspace_root: "/tmp/repo",
+        repo: "acme/demo",
+        issue: { id: 34, title: "review command", url: null },
+        branch: "codex/issue-34-vibe-review",
+        base_branch: "main",
+        pr: { number: 99, url: null },
+        attempt: 1,
+        max_attempts: 5,
+        autofix: true,
+        passes: REVIEW_PASS_ORDER,
+      },
+    });
+
+    expect(result.output.run_id).toBe("run-retry-ok");
+    expect(invocations).toBe(2);
+  });
+
+  it("does not retry schema mismatch even when invocation retry budget allows it", async () => {
+    let invocations = 0;
+    const execaMock = vi.fn(async () => {
+      invocations += 1;
+      return {
+        stdout: "not-json",
+      };
+    });
+
+    await expect(
+      runReviewAgent({
+        execaFn: execaMock as never,
+        invocationRetry: { maxInvocations: 3 },
+        plan: {
+          mode: "command",
+          provider: "command",
+          source: "flag",
+          command: "cat",
+          runtimePath: "/tmp/review-provider.json",
+          autoMode: false,
+          resumeThreadId: null,
+          healedFromRuntime: null,
+        },
+        input: {
+          version: 1,
+          workspace_root: "/tmp/repo",
+          repo: "acme/demo",
+          issue: { id: 34, title: "review command", url: null },
+          branch: "codex/issue-34-vibe-review",
+          base_branch: "main",
+          pr: { number: 99, url: null },
+          attempt: 1,
+          max_attempts: 5,
+          autofix: true,
+          passes: REVIEW_PASS_ORDER,
+        },
+      }),
+    ).rejects.toThrow("schema mismatch");
+    expect(invocations).toBe(1);
   });
 });

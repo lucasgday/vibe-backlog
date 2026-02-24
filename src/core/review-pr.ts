@@ -5,6 +5,7 @@ import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
 import { createIssueWithBodyFile } from "./gh-issue";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import type { ReviewComputeClass, ReviewPassProfile } from "./review-policy";
 import { ensureRepositoryMilestone, suggestSemanticMilestoneForIssue } from "./tracker";
 
 type ExecaFn = typeof execa;
@@ -28,6 +29,7 @@ export type ReviewIssueSnapshot = {
   title: string;
   url: string | null;
   milestone: string | null;
+  labels: string[];
 };
 
 export type ReviewPrSnapshot = {
@@ -73,6 +75,8 @@ export type ReviewPolicyProfile = {
   publish: boolean;
   strict: boolean;
   maxAttempts: number;
+  computeClass?: ReviewComputeClass | null;
+  passProfile?: ReviewPassProfile | null;
 };
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
@@ -249,7 +253,7 @@ export async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string
 }
 
 export async function fetchIssueSnapshot(execaFn: ExecaFn, issueId: number): Promise<ReviewIssueSnapshot> {
-  const response = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title,url,milestone"], {
+  const response = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title,url,milestone,labels"], {
     stdio: "pipe",
   });
   const row = parseJsonObject(response.stdout, "gh issue view");
@@ -271,6 +275,7 @@ export async function fetchIssueSnapshot(execaFn: ExecaFn, issueId: number): Pro
     title,
     url: parseNullableString(row.url),
     milestone,
+    labels: parseLabelNames(row.labels),
   };
 }
 
@@ -401,6 +406,22 @@ function normalizePolicyKey(policyKey: string | null | undefined): string | null
   return normalized || null;
 }
 
+function normalizePolicyKeyForComparison(
+  policyKey: string | null | undefined,
+  options?: { ignorePassProfile?: boolean },
+): string | null {
+  const normalized = normalizePolicyKey(policyKey);
+  if (!normalized) return null;
+  if (!options?.ignorePassProfile) return normalized;
+
+  return normalized
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !part.startsWith("pass_profile="))
+    .join(";");
+}
+
 function normalizeMaxAttempts(value: number): number {
   if (!Number.isFinite(value)) return 1;
   const rounded = Math.trunc(value);
@@ -409,13 +430,17 @@ function normalizeMaxAttempts(value: number): number {
 
 export function buildReviewPolicyKey(profile: ReviewPolicyProfile): string {
   const maxAttempts = normalizeMaxAttempts(profile.maxAttempts);
+  const computeClass = (profile.computeClass ?? "L3-deep").trim().toLowerCase();
+  const passProfile = (profile.passProfile ?? "full").trim().toLowerCase();
   return [
-    "v1",
+    "v2",
     `autofix=${profile.autofix ? "1" : "0"}`,
     `autopush=${profile.autopush ? "1" : "0"}`,
     `publish=${profile.publish ? "1" : "0"}`,
     `strict=${profile.strict ? "1" : "0"}`,
     `max_attempts=${String(maxAttempts)}`,
+    `compute_class=${computeClass}`,
+    `pass_profile=${passProfile}`,
   ]
     .join(";")
     .toLowerCase();
@@ -427,6 +452,8 @@ export const PR_OPEN_REVIEW_GATE_POLICY_KEY = buildReviewPolicyKey({
   publish: true,
   strict: false,
   maxAttempts: 5,
+  computeClass: "L2-standard",
+  passProfile: "full",
 });
 
 async function upsertReviewSummaryComment(
@@ -469,11 +496,14 @@ export async function hasReviewForHead(
   headSha: string,
   options?: {
     policyKey?: string | null;
+    ignorePassProfile?: boolean;
   },
 ): Promise<boolean> {
   if (prNumber <= 0 || !headSha.trim()) return false;
   const target = headSha.trim().toLowerCase();
-  const targetPolicy = normalizePolicyKey(options?.policyKey);
+  const targetPolicy = normalizePolicyKeyForComparison(options?.policyKey, {
+    ignorePassProfile: Boolean(options?.ignorePassProfile),
+  });
   const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/issues/${prNumber}/comments`, "gh issue comments");
   let foundHeadMarker = false;
   let foundPolicyMarkersForHead = false;
@@ -487,7 +517,15 @@ export async function hasReviewForHead(
     foundHeadMarker = true;
     if (!targetPolicy) return true;
 
-    const policyMarkers = extractReviewPolicyMarkers(body);
+    const policyMarkers = new Set(
+      Array.from(extractReviewPolicyMarkers(body))
+        .map((policy) =>
+          normalizePolicyKeyForComparison(policy, {
+            ignorePassProfile: Boolean(options?.ignorePassProfile),
+          }),
+        )
+        .filter((policy): policy is string => Boolean(policy)),
+    );
     if (!policyMarkers.size) continue;
     foundPolicyMarkersForHead = true;
     if (policyMarkers.has(targetPolicy)) {

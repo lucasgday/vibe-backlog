@@ -31,6 +31,7 @@ import { hasReviewForHead, postReviewGateSkipComment, PR_OPEN_REVIEW_GATE_POLICY
 import { resolveReviewThreads } from "./core/review-threads";
 import { runGhWithRetry } from "./core/gh-retry";
 import { runBranchCleanup, type BranchCleanupResult } from "./core/branch-cleanup";
+import { normalizeReviewComputeClass, REVIEW_COMPUTE_CLASS_VALUES } from "./core/review-policy";
 import {
   normalizeSecurityPolicy,
   normalizeSecurityScanMode,
@@ -1432,6 +1433,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           const repo = await resolveRepoNameWithOwner(execaFn);
           gateSatisfied = await hasReviewForHead(execaFn, repo, result.prNumber, headSha, {
             policyKey: PR_OPEN_REVIEW_GATE_POLICY_KEY,
+            ignorePassProfile: true,
           });
         }
 
@@ -1470,10 +1472,15 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             maxAttempts: 5,
             strict: false,
             followupLabel: null,
+            computeClass: "L2-standard",
+            flowKind: "pr-open-gate",
           },
           execaFn,
         );
         console.log(`pr open: review termination=${reviewResult.terminationReason}`);
+        console.log(
+          `pr open: review policy class=${reviewResult.computeClass} pass_profile=${reviewResult.passProfile} agent_retry_budget=${reviewResult.agentInvocationRetryBudget}`,
+        );
         if (reviewResult.rationaleAutofilled) {
           console.log("pr open: rationale sections autofilled in existing PR body.");
         }
@@ -1684,6 +1691,10 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("--no-autopush", "Disable automatic git commit/push at the end")
     .option("--no-publish", "Skip PR publication (summary/review/inline comments)")
     .option("--max-attempts <n>", "Maximum review attempts before creating follow-up issue", "5")
+    .option(
+      "--compute-class <class>",
+      `Review policy preset for agent invocation retries/pruning (${REVIEW_COMPUTE_CLASS_VALUES.join("|")})`,
+    )
     .option("--strict", "Exit non-zero when unresolved findings remain after max attempts", false)
     .option("--followup-label <label>", "Override follow-up issue label (bug|enhancement)")
     .action(async (opts) => {
@@ -1697,6 +1708,14 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       const parsedMaxAttempts = Number(opts.maxAttempts);
       if (!Number.isFinite(parsedMaxAttempts)) {
         console.error("review: --max-attempts must be a number.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const computeClassRaw = typeof opts.computeClass === "string" ? opts.computeClass.trim() : "";
+      const computeClass = computeClassRaw ? normalizeReviewComputeClass(computeClassRaw) : null;
+      if (computeClassRaw && !computeClass) {
+        console.error(`review: --compute-class must be one of: ${REVIEW_COMPUTE_CLASS_VALUES.join(", ")}`);
         process.exitCode = 1;
         return;
       }
@@ -1721,6 +1740,8 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             maxAttempts: parsedMaxAttempts,
             strict: Boolean(opts.strict),
             followupLabel: followupLabelRaw ? (followupLabelRaw as "bug" | "enhancement") : null,
+            computeClass,
+            flowKind: "review",
           },
           execaFn,
         );
@@ -1737,6 +1758,12 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         }
         console.log(`review: attempts=${result.attemptsUsed} unresolved=${result.unresolvedFindings.length}`);
         console.log(`review: termination=${result.terminationReason}`);
+        console.log(
+          `review: policy compute_class=${result.computeClass} pass_profile=${result.passProfile} agent_retry_budget=${result.agentInvocationRetryBudget}`,
+        );
+        if (result.skippedPasses.length) {
+          console.log(`review: skipped_passes=${result.skippedPasses.join(",")}`);
+        }
         console.log(`review: findings_totals_source=${result.findingTotalsSource}`);
         if (result.findingTotalsWarning) {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);

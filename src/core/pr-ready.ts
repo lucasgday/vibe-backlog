@@ -462,6 +462,7 @@ export async function runPrReadyCommand(
     const repo = await resolveRepoNameWithOwner(execaFn);
     const reviewGateSatisfied = await hasReviewForHead(execaFn, repo, prNumber, headRefOid, {
       policyKey: PR_OPEN_REVIEW_GATE_POLICY_KEY,
+      ignorePassProfile: true,
     });
     if (reviewGateSatisfied) {
       checks.push({
