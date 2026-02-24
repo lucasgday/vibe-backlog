@@ -1,10 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
+import { createIssueWithBodyFile } from "./gh-issue";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
 import { ensureRepositoryMilestone, suggestSemanticMilestoneForIssue } from "./tracker";
 
@@ -845,22 +844,7 @@ async function createIssueWithLabels(params: {
   labels: string[];
   milestoneTitle: string | null;
 }) {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "vibe-issue-body-"));
-  const bodyFilePath = path.join(tempDir, "body.md");
-
-  try {
-    await writeFile(bodyFilePath, params.body, "utf8");
-    const args = ["issue", "create", "--title", params.title, "--body-file", bodyFilePath];
-    for (const label of params.labels) {
-      args.push("--label", label);
-    }
-    if (params.milestoneTitle) {
-      args.push("--milestone", params.milestoneTitle);
-    }
-    return await runGhWithRetry(params.execaFn, args, { stdio: "pipe" });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  return await createIssueWithBodyFile(params);
 }
 
 type OpenFollowUpIssue = {
