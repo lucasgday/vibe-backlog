@@ -39,6 +39,27 @@
 ### Findings
 - none
 
+## Run 2026-02-26T18:22:50Z
+- run_id: manual-issue-83-comments-quality
+- findings: 0
+
+### What I Tested
+- Commands:
+- `pnpm exec vitest run tests/git-changed-files.test.ts tests/pr-rationale.test.ts`
+- `pnpm test`
+- `pnpm build`
+- Scenarios:
+- prefer `origin/<base>` over local base ref for changed-file signal diffing
+- fallback to local base when remote-tracking base ref is missing
+- fallback to `HEAD` when target branch ref is unavailable locally
+- tracker theme heuristic no longer matches generic `issue-<N>-...` branch naming
+
+### Remaining Gaps
+- No live simulation of a shallow/ephemeral clone was run; coverage is via helper-level execa mocks.
+
+### Findings
+- none
+
 ## Run 2026-02-26T18:13:47.204Z
 - run_id: review-issue-83-pr-84-attempt-1
 - attempt: 1/5

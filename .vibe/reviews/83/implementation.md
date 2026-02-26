@@ -22,6 +22,16 @@ Replaced the fixed rationale bullet sets in `src/core/pr-rationale.ts` with dete
 ### Findings
 - none
 
+## Run 2026-02-26T18:22:50Z
+- run_id: manual-issue-83-comments-implementation
+- findings: 0
+
+### Summary
+Addressed PR review comments on rationale signal extraction by extracting a shared helper (`src/core/git-changed-files.ts`) used by both `pr-open` and review flows. The helper now resolves refs before diffing, prefers `origin/<base>` over the local base branch, and falls back to `HEAD` when the target branch ref is unavailable locally, reducing stale/missing-ref misclassification risk.
+
+### Findings
+- none
+
 ## Run 2026-02-26T18:13:47.202Z
 - run_id: review-issue-83-pr-84-attempt-1
 - attempt: 1/5

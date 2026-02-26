@@ -22,6 +22,16 @@ Operational impact is low: the change is contained to PR rationale generation an
 ### Findings
 - none
 
+## Run 2026-02-26T18:22:50Z
+- run_id: manual-issue-83-comments-ops
+- findings: 0
+
+### Summary
+The comment-fix patch improves operational robustness of rationale generation in repos with stale local base branches or incomplete local refs by resolving refs before diffing and preferring remote-tracking base refs. No CI/package/dependency changes were introduced.
+
+### Findings
+- none
+
 ## Run 2026-02-26T18:13:47.205Z
 - run_id: review-issue-83-pr-84-attempt-1
 - attempt: 1/5

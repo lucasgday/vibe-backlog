@@ -22,6 +22,16 @@ This change improves dogfooding loop quality by making PR rationale sections ref
 ### Findings
 - none
 
+## Run 2026-02-26T18:22:50Z
+- run_id: manual-issue-83-comments-growth
+- findings: 0
+
+### Summary
+Addressed the growth feedback by capturing a concrete follow-up for rationale-signal observability/debugging in issue #85, keeping #83 scoped to the shipped rationale behavior while preserving a path to measure heuristic quality.
+
+### Findings
+- none
+
 ## Run 2026-02-26T18:13:47.205Z
 - run_id: review-issue-83-pr-84-attempt-1
 - attempt: 1/5

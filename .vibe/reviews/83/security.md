@@ -24,6 +24,16 @@ Signal extraction in `pr-open`/`review-pr` uses read-only `git diff --name-only`
 ### Findings
 - none
 
+## Run 2026-02-26T18:22:50Z
+- run_id: manual-issue-83-comments-security
+- findings: 0
+
+### Summary
+No new security findings in the comment-fix delta. The ref-resolution helper remains read-only (`git rev-parse`, `git diff --name-only`) and degrades to fallback rationale signals when refs are unavailable; no additional write surface, credential handling, or data exposure paths were introduced.
+
+### Findings
+- none
+
 ## Run 2026-02-26T18:13:47.203Z
 - run_id: review-issue-83-pr-84-attempt-1
 - attempt: 1/5
