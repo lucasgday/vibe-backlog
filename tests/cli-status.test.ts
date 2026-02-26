@@ -127,7 +127,7 @@ describe.sequential("cli status and preflight snapshots", () => {
 
   it("prints preflight in-progress section and hygiene warnings", async () => {
     const logs: string[] = [];
-    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+    const execaMock = vi.fn(async (cmd: string, args: string[], opts?: Record<string, unknown>) => {
       if (args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main" };
       }
@@ -170,7 +170,8 @@ describe.sequential("cli status and preflight snapshots", () => {
 
   it("prints a non-blocking tool update notice in preflight when newer version exists", async () => {
     const logs: string[] = [];
-    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+    let npmViewOptions: Record<string, unknown> | undefined;
+    const execaMock = vi.fn(async (cmd: string, args: string[], opts?: Record<string, unknown>) => {
       if (args[0] === "status" && args[1] === "-sb") {
         return { stdout: "## main" };
       }
@@ -181,6 +182,7 @@ describe.sequential("cli status and preflight snapshots", () => {
         return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
       }
       if (cmd === "npm" && args[0] === "view") {
+        npmViewOptions = opts;
         return { stdout: JSON.stringify("0.2.0") };
       }
       return { stdout: "" };
@@ -197,6 +199,7 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("Tool update available:"))).toBe(true);
     expect(logs.some((line) => line.includes("vibe-backlog: 0.1.0 -> 0.2.0"))).toBe(true);
     expect(logs.some((line) => line.includes("Run: node dist/cli.cjs self update"))).toBe(true);
+    expect(npmViewOptions?.timeout).toBe(2000);
     expect(process.exitCode).toBeUndefined();
   });
 

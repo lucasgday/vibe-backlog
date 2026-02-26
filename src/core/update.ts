@@ -88,13 +88,17 @@ function compareSemver(a: string, b: string): number | null {
 }
 
 export async function checkToolUpdate(
-  options: { packageName: string; currentVersion: string },
+  options: { packageName: string; currentVersion: string; timeoutMs?: number | null },
   execaFn: ExecaLike,
 ): Promise<ToolUpdateCheckResult> {
   const command = ["npm", ...buildSelfUpdateArgs(options.packageName)];
+  const execaOptions: Record<string, unknown> = { stdio: "pipe" };
+  if (typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+    execaOptions.timeout = Math.trunc(options.timeoutMs);
+  }
 
   try {
-    const response = await execaFn("npm", ["view", options.packageName, "version", "--json"], { stdio: "pipe" });
+    const response = await execaFn("npm", ["view", options.packageName, "version", "--json"], execaOptions);
     const latestVersion = parseNpmViewVersion(String(response.stdout ?? ""));
     if (!latestVersion) {
       return {
@@ -152,13 +156,21 @@ export async function checkToolUpdate(
 }
 
 export async function runToolSelfUpdate(
-  options: { packageName: string; currentVersion: string; dryRun: boolean; checkOnly: boolean },
+  options: {
+    packageName: string;
+    currentVersion: string;
+    dryRun: boolean;
+    checkOnly: boolean;
+    execStdio?: "inherit" | "pipe";
+    checkTimeoutMs?: number | null;
+  },
   execaFn: ExecaLike,
 ): Promise<ToolSelfUpdateRunResult> {
   const check = await checkToolUpdate(
     {
       packageName: options.packageName,
       currentVersion: options.currentVersion,
+      timeoutMs: options.checkTimeoutMs ?? null,
     },
     execaFn,
   );
@@ -167,7 +179,7 @@ export async function runToolSelfUpdate(
     !options.checkOnly && !options.dryRun && check.status === "update-available" && check.command.length >= 2;
 
   if (shouldExecute) {
-    await execaFn(check.command[0]!, check.command.slice(1), { stdio: "inherit" });
+    await execaFn(check.command[0]!, check.command.slice(1), { stdio: options.execStdio ?? "inherit" });
   }
 
   return {
@@ -177,4 +189,3 @@ export async function runToolSelfUpdate(
     executed: shouldExecute,
   };
 }
-

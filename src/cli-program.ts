@@ -70,6 +70,7 @@ async function printPreflightToolUpdateNotice(execaFn: ExecaFn): Promise<void> {
     {
       packageName: CLI_PACKAGE_NAME,
       currentVersion: CLI_VERSION,
+      timeoutMs: 2000,
     },
     execaFn,
   );
@@ -1599,6 +1600,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             currentVersion: CLI_VERSION,
             dryRun,
             checkOnly,
+            execStdio: jsonOutput ? "pipe" : "inherit",
           },
           execaFn,
         );

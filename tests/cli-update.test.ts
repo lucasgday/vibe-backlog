@@ -76,6 +76,35 @@ describe.sequential("cli update flows", () => {
     expect(check.latestVersion).toBe("0.2.0");
   });
 
+  it("keeps self update --json machine-readable when an update is executed", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[], opts?: Record<string, unknown>) => {
+      if (cmd === "npm" && args[0] === "view") {
+        return { stdout: JSON.stringify("0.2.0") };
+      }
+      if (cmd === "npm" && args[0] === "install" && args[1] === "-g") {
+        expect(opts?.stdio).toBe("pipe");
+        return { stdout: "installed\n" };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "self", "update", "--json"]);
+
+    expect(logs).toHaveLength(1);
+    const payload = JSON.parse(logs[0] ?? "{}") as Record<string, unknown>;
+    expect(payload.kind).toBe("tool-self-update");
+    expect(payload.executed).toBe(true);
+    const check = payload.check as Record<string, unknown>;
+    expect(check.status).toBe("update-available");
+  });
+
   it("keeps self update check non-blocking when registry is unavailable", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
