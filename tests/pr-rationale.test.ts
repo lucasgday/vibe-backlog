@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   autofillRationaleSections,
+  buildRationaleSections,
   hasRationaleTodoPlaceholders,
   type RationaleContext,
 } from "../src/core/pr-rationale";
@@ -64,5 +65,123 @@ describe("pr rationale helpers", () => {
     expect(second.changed).toBe(false);
     expect(second.changedSections).toHaveLength(0);
     expect(second.body).toBe(first.body);
+  });
+
+  it("generates distinct rationale sections across CLI, docs-only, and mixed code+tests contexts", () => {
+    const cliContext: RationaleContext = {
+      issueId: 83,
+      issueTitle: "feat(pr): dynamic rationale sections from PR signals",
+      branch: "issue-83-dynamic-pr-rationale",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["module:cli", "enhancement"],
+        changedFiles: ["src/core/pr-rationale.ts", "src/core/pr-open.ts"],
+      },
+    };
+    const docsContext: RationaleContext = {
+      issueId: 21,
+      issueTitle: "docs: add Mermaid workflow diagram",
+      branch: "issue-21-readme-mermaid",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["module:docs"],
+        changedFiles: ["README.md", "docs/workflow.md"],
+      },
+    };
+    const mixedContext: RationaleContext = {
+      issueId: 90,
+      issueTitle: "feat(tracker): harden label sync",
+      branch: "issue-90-tracker-sync",
+      mode: "review",
+      signals: {
+        issueLabels: ["module:tracker", "bug"],
+        changedFiles: ["src/core/tracker.ts", "tests/tracker.test.ts"],
+      },
+    };
+
+    const cli = buildRationaleSections(cliContext);
+    const docs = buildRationaleSections(docsContext);
+    const mixed = buildRationaleSections(mixedContext);
+
+    expect(cli.architecture.join("\n")).toContain("profile=`code-only`");
+    expect(docs.architecture.join("\n")).toContain("profile=`docs-only`");
+    expect(docs.architecture.join("\n")).toContain("documentation-only");
+    expect(mixed.architecture.join("\n")).toContain("profile=`code+tests`");
+    expect(mixed.why.join("\n")).toContain("Mixed code+tests changes");
+    expect(cli.why.join("\n")).not.toContain("themes=pr, tracker");
+
+    expect(cli.why.join("\n")).not.toBe(docs.why.join("\n"));
+    expect(cli.why.join("\n")).not.toBe(mixed.why.join("\n"));
+    expect(docs.why.join("\n")).not.toBe(mixed.why.join("\n"));
+  });
+
+  it("uses explicit fallback text when changed-file signals are unavailable", () => {
+    const sections = buildRationaleSections({
+      issueId: 83,
+      issueTitle: "feat(pr): dynamic rationale sections from PR signals",
+      branch: "issue-83-dynamic-pr-rationale",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["module:cli"],
+      },
+    });
+
+    expect(sections.architecture.join("\n")).toContain("Fallback: changed-file signals were unavailable");
+    expect(sections.alternatives.join("\n")).toContain("Fallback: postpone specificity until changed-file signals are available");
+  });
+
+  it("is deterministic for the same inputs even when signal ordering differs", () => {
+    const a = buildRationaleSections({
+      issueId: 83,
+      issueTitle: "feat(pr): dynamic rationale sections from PR signals",
+      branch: "issue-83-dynamic-pr-rationale",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["module:cli", "enhancement", "module:cli"],
+        changedFiles: ["tests/pr-rationale.test.ts", "src/core/pr-rationale.ts", "src/core/pr-rationale.ts"],
+      },
+    });
+
+    const b = buildRationaleSections({
+      issueId: 83,
+      issueTitle: "feat(pr): dynamic rationale sections from PR signals",
+      branch: "issue-83-dynamic-pr-rationale",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["enhancement", "module:cli"],
+        changedFiles: ["src/core/pr-rationale.ts", "tests/pr-rationale.test.ts"],
+      },
+    });
+
+    expect(b).toEqual(a);
+  });
+
+  it("preserves user-written text outside placeholder sections during autofill", () => {
+    const body = [
+      "## Summary",
+      "- Custom summary line",
+      "",
+      "## Architecture decisions",
+      "- TODO: fill architecture",
+      "",
+      "## Why these decisions were made",
+      "- Keep this custom reviewer context",
+      "",
+      "## Alternatives considered / rejected",
+      "- TODO: fill alternatives",
+      "",
+      "## Extra section",
+      "- user content stays",
+      "",
+      "Fixes #44",
+    ].join("\n");
+
+    const result = autofillRationaleSections(body, CONTEXT);
+
+    expect(result.changed).toBe(true);
+    expect(result.body).toContain("- Custom summary line");
+    expect(result.body).toContain("## Why these decisions were made\n- Keep this custom reviewer context");
+    expect(result.body).toContain("## Extra section\n- user content stays");
+    expect(result.body).not.toContain("TODO:");
   });
 });

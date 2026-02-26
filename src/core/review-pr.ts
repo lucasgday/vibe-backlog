@@ -5,6 +5,7 @@ import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
 import { createIssueWithBodyFile } from "./gh-issue";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import { listChangedFilesForRationale } from "./git-changed-files";
 import type { ReviewComputeClass, ReviewPassProfile } from "./review-policy";
 import { ensureRepositoryMilestone, suggestSemanticMilestoneForIssue } from "./tracker";
 
@@ -221,26 +222,6 @@ function buildAutoPrTitle(issueId: number, issueTitle: string): string {
   return `review: #${issueId} ${issueTitle}`;
 }
 
-function buildAutoPrBody(issueId: number, branch: string, issueTitle: string): string {
-  return buildBodyWithRationale({
-    summaryLines: [
-      `- Auto-created by \`vibe review\` for branch \`${branch}\`.`,
-      `- Target issue: #${issueId} (${issueTitle}).`,
-    ],
-    issueId,
-    context: {
-      issueId,
-      issueTitle,
-      branch,
-      mode: "review",
-    },
-    headings: {
-      why: "## Why these decisions",
-      alternatives: "## Alternatives considered",
-    },
-  });
-}
-
 export async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
   const response = await runGhWithRetry(execaFn, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
     stdio: "pipe",
@@ -283,13 +264,45 @@ type ResolvePrParams = {
   execaFn: ExecaFn;
   issueId: number;
   issueTitle: string;
+  issueLabels?: string[];
   branch: string;
   baseBranch: string;
   dryRun: boolean;
 };
 
+function buildAutoPrBody(params: {
+  issueId: number;
+  branch: string;
+  issueTitle: string;
+  issueLabels?: string[];
+  changedFiles?: string[];
+}): string {
+  return buildBodyWithRationale({
+    summaryLines: [
+      `- Auto-created by \`vibe review\` for branch \`${params.branch}\`.`,
+      `- Target issue: #${params.issueId} (${params.issueTitle}).`,
+    ],
+    issueId: params.issueId,
+    context: {
+      issueId: params.issueId,
+      issueTitle: params.issueTitle,
+      branch: params.branch,
+      mode: "review",
+      signals: {
+        issueLabels: params.issueLabels,
+        changedFiles: params.changedFiles,
+      },
+    },
+    headings: {
+      why: "## Why these decisions",
+      alternatives: "## Alternatives considered",
+    },
+  });
+}
+
 export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams): Promise<ReviewPrSnapshot> {
-  const { execaFn, issueId, issueTitle, branch, baseBranch, dryRun } = params;
+  const { execaFn, issueId, issueTitle, issueLabels, branch, baseBranch, dryRun } = params;
+  const changedFiles = await listChangedFilesForRationale(execaFn, { baseBranch, branch });
 
   const listed = await runGhWithRetry(
     execaFn,
@@ -305,6 +318,10 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
         issueTitle,
         branch,
         mode: "review",
+        signals: {
+          issueLabels,
+          changedFiles,
+        },
       });
       if (nextBodyResult.changed) {
         await runGhWithRetry(execaFn, ["pr", "edit", String(open.number), "--body", nextBodyResult.body], {
@@ -320,7 +337,13 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
   }
 
   const title = buildAutoPrTitle(issueId, issueTitle);
-  const body = buildAutoPrBody(issueId, branch, issueTitle);
+  const body = buildAutoPrBody({
+    issueId,
+    issueTitle,
+    branch,
+    issueLabels,
+    changedFiles,
+  });
 
   if (dryRun) {
     return {

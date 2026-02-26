@@ -727,6 +727,7 @@ export async function runReviewCommand(
     execaFn,
     issueId: context.issueId,
     issueTitle: issue.title,
+    issueLabels: issue.labels,
     branch: context.branch,
     baseBranch: context.baseBranch,
     dryRun: options.dryRun,
