@@ -212,7 +212,7 @@ function detectIssueThemes(context: RationaleContext, labels: string[]): string[
   const rules: Array<{ key: string; regex: RegExp }> = [
     { key: "pr", regex: /\bpr\b|pull request|rationale/ },
     { key: "review", regex: /\breview\b|thread/ },
-    { key: "tracker", regex: /\btracker\b|issue/ },
+    { key: "tracker", regex: /\btracker\b|label sync|milestone|status:\w+/ },
     { key: "docs", regex: /\bdocs?\b|readme|mermaid/ },
     { key: "security", regex: /\bsecurity\b|gitleaks|secret/ },
     { key: "turn", regex: /\bturn\b/ },

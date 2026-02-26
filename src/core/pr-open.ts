@@ -2,6 +2,7 @@ import { execa } from "execa";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import { listChangedFilesForRationale } from "./git-changed-files";
 
 type ExecaFn = typeof execa;
 
@@ -168,28 +169,6 @@ async function fetchIssueSnapshot(
     labels: parseLabelNames(row.labels),
     body: parseNullableString(row.body),
   };
-}
-
-async function listChangedFilesForRationale(execaFn: ExecaFn, baseBranch: string, branch: string): Promise<string[]> {
-  const candidateArgs = [
-    ["diff", "--name-only", `${baseBranch}...${branch}`],
-    ["diff", "--name-only", "--cached"],
-  ] as const;
-
-  for (const args of candidateArgs) {
-    try {
-      const response = await execaFn("git", [...args], { stdio: "pipe" });
-      const files = response.stdout
-        .split(/\r?\n/)
-        .map((value) => value.trim())
-        .filter(Boolean);
-      if (files.length > 0) return files;
-    } catch {
-      // Best-effort signal extraction; rationale generation falls back explicitly.
-    }
-  }
-
-  return [];
 }
 
 async function findOpenPrByHead(execaFn: ExecaFn, branch: string): Promise<OpenPrSnapshot | null> {
@@ -397,7 +376,7 @@ export async function runPrOpenCommand(
   const baseFromArgs = options.baseBranchOverride?.trim() || null;
   const baseFromTurn = turnDefaults.state === "ok" ? turnDefaults.baseBranch : null;
   const baseBranch = baseFromArgs ?? baseFromTurn ?? "main";
-  const changedFiles = await listChangedFilesForRationale(execaFn, baseBranch, branch);
+  const changedFiles = await listChangedFilesForRationale(execaFn, { baseBranch, branch });
 
   const openPr = await findOpenPrByHead(execaFn, branch);
   if (openPr) {

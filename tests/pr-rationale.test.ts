@@ -108,6 +108,7 @@ describe("pr rationale helpers", () => {
     expect(docs.architecture.join("\n")).toContain("documentation-only");
     expect(mixed.architecture.join("\n")).toContain("profile=`code+tests`");
     expect(mixed.why.join("\n")).toContain("Mixed code+tests changes");
+    expect(cli.why.join("\n")).not.toContain("themes=pr, tracker");
 
     expect(cli.why.join("\n")).not.toBe(docs.why.join("\n"));
     expect(cli.why.join("\n")).not.toBe(mixed.why.join("\n"));

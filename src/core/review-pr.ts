@@ -5,6 +5,7 @@ import { REVIEW_PASS_ORDER, type ReviewFinding } from "./review-agent";
 import { runGhWithRetry } from "./gh-retry";
 import { createIssueWithBodyFile } from "./gh-issue";
 import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import { listChangedFilesForRationale } from "./git-changed-files";
 import type { ReviewComputeClass, ReviewPassProfile } from "./review-policy";
 import { ensureRepositoryMilestone, suggestSemanticMilestoneForIssue } from "./tracker";
 
@@ -147,28 +148,6 @@ function extractIssueNumberFromUrl(url: string | null): number | null {
   if (!url) return null;
   const match = /\/issues\/([0-9]+)\b/.exec(url);
   return match ? Number(match[1]) : null;
-}
-
-async function listChangedFilesForRationale(execaFn: ExecaFn, baseBranch: string, branch: string): Promise<string[]> {
-  const candidateArgs = [
-    ["diff", "--name-only", `${baseBranch}...${branch}`],
-    ["diff", "--name-only", "--cached"],
-  ] as const;
-
-  for (const args of candidateArgs) {
-    try {
-      const response = await execaFn("git", [...args], { stdio: "pipe" });
-      const files = response.stdout
-        .split(/\r?\n/)
-        .map((value) => value.trim())
-        .filter(Boolean);
-      if (files.length > 0) return files;
-    } catch {
-      // Best-effort signal extraction; PR rationale falls back when unavailable.
-    }
-  }
-
-  return [];
 }
 
 function normalizeFindingText(value: string): string {
@@ -323,7 +302,7 @@ function buildAutoPrBody(params: {
 
 export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams): Promise<ReviewPrSnapshot> {
   const { execaFn, issueId, issueTitle, issueLabels, branch, baseBranch, dryRun } = params;
-  const changedFiles = await listChangedFilesForRationale(execaFn, baseBranch, branch);
+  const changedFiles = await listChangedFilesForRationale(execaFn, { baseBranch, branch });
 
   const listed = await runGhWithRetry(
     execaFn,
