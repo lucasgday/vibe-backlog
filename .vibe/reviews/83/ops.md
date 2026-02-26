@@ -43,3 +43,15 @@ No release or CI blockers were found; the change is isolated to rationale genera
 
 ### Findings
 - none
+
+## Run 2026-02-26T18:26:52.739Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No operational/release blockers found. The shared changed-file helper reduces ref-availability fragility by preferring remote-tracking base refs and falling back safely when refs are missing.
+
+### Findings
+- none

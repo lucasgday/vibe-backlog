@@ -71,3 +71,15 @@ Unit coverage for rationale generation is strong, but integration coverage does 
 
 ### Findings
 - [P2] CLI tests do not assert changed-file signal extraction or base-ref correctness (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-pr-open.test.ts:111)
+
+## Run 2026-02-26T18:26:52.738Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage improved materially with helper-level tests for changed-file signal extraction and rationale heuristics, but one realistic label mix case is still missing and would catch the remaining tracker-theme misclassification.
+
+### Findings
+- [P3] Rationale tests omit common `status:*` labels from fixture inputs (/Users/lucasgday/code/codex/vibe-backlog/tests/pr-rationale.test.ts:77)

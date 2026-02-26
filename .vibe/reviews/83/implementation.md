@@ -44,3 +44,15 @@ Two correctness issues were found in the new signal-driven rationale path: chang
 ### Findings
 - [P1] Changed-file signals can include unrelated upstream commits when local base branch is stale (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-open.ts:175)
 - [P2] Tracker theme heuristic matches nearly every issue branch (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-rationale.ts:215)
+
+## Run 2026-02-26T18:26:52.737Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Ref-resolution hardening in changed-file signal extraction looks good and addresses the earlier stale/missing-ref issues, but one rationale heuristic still over-classifies unrelated issues as tracker-related.
+
+### Findings
+- [P2] Tracker theme heuristic still overmatches due to universal status labels (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-rationale.ts:215)
