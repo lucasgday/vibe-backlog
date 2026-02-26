@@ -241,10 +241,12 @@ function recordPreview(
   after: string,
 ): void {
   if (!previews) return;
+  const beforePreview = before === null ? null : redactProtectedSectionsForPreview(before);
+  const afterPreview = redactProtectedSectionsForPreview(after);
   previews.push({
     filePath,
     action: before === null ? "create" : "update",
-    preview: renderDiffPreview(filePath, before, after),
+    preview: renderDiffPreview(filePath, beforePreview, afterPreview),
   });
 }
 
@@ -277,6 +279,26 @@ function findMarkedSectionRange(content: string, marker: ProtectedSectionMarker)
   const endMarkerIndex = findStandaloneMarkerIndex(content, marker.end, startIndex + marker.start.length);
   if (endMarkerIndex < 0) return null;
   return { start: startIndex, end: endMarkerIndex + marker.end.length };
+}
+
+function redactProtectedSectionsForPreview(content: string): string {
+  let next = content;
+
+  for (const marker of PROTECTED_SECTION_MARKERS) {
+    let searchFrom = 0;
+    while (searchFrom < next.length) {
+      const startIndex = findStandaloneMarkerIndex(next, marker.start, searchFrom);
+      if (startIndex < 0) break;
+      const endMarkerIndex = findStandaloneMarkerIndex(next, marker.end, startIndex + marker.start.length);
+      if (endMarkerIndex < 0) break;
+
+      const replacement = `${marker.start}\n[vibe protected section redacted in preview]\n${marker.end}`;
+      next = `${next.slice(0, startIndex)}${replacement}${next.slice(endMarkerIndex + marker.end.length)}`;
+      searchFrom = startIndex + replacement.length;
+    }
+  }
+
+  return next;
 }
 
 export function preserveProtectedSections(templateContent: string, currentContent: string): string {
@@ -550,7 +572,7 @@ export async function applyVibeScaffoldUpdate(options: VibeScaffoldUpdateOptions
     unchanged: [],
   };
 
-  if (check.status === "not-initialized") {
+  if (check.status === "not-initialized" || !check.updateAvailable) {
     return result;
   }
 

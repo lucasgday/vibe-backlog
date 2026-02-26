@@ -1586,9 +1586,11 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .description("Check for and optionally apply explicit vibe CLI updates")
     .option("--check", "Check registry version only (no install)", false)
     .option("--dry-run", "Print install command without executing it", false)
+    .option("--json", "Print machine-readable JSON output", false)
     .action(async (opts) => {
       const checkOnly = Boolean(opts.check);
       const dryRun = Boolean(opts.dryRun);
+      const jsonOutput = Boolean(opts.json);
 
       try {
         const result = await runToolSelfUpdate(
@@ -1600,6 +1602,20 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           },
           execaFn,
         );
+
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              {
+                kind: "tool-self-update",
+                ...result,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
 
         const commandText = "$ " + result.check.command.join(" ");
         if (result.check.status === "unavailable") {
@@ -1648,9 +1664,11 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .description("Check/apply .vibe scaffold updates for current repository")
     .option("--check", "Check scaffold version/metadata only", false)
     .option("--dry-run", "Preview scaffold changes without writing files", false)
+    .option("--json", "Print machine-readable JSON output", false)
     .action(async (opts) => {
       const checkOnly = Boolean(opts.check);
       const dryRun = Boolean(opts.dryRun);
+      const jsonOutput = Boolean(opts.json);
 
       try {
         if (checkOnly) {
@@ -1658,6 +1676,21 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             toolPackageName: CLI_PACKAGE_NAME,
             toolVersion: CLI_VERSION,
           });
+
+          if (jsonOutput) {
+            console.log(
+              JSON.stringify(
+                {
+                  kind: "scaffold-update-check",
+                  check_only: true,
+                  ...check,
+                },
+                null,
+                2,
+              ),
+            );
+            return;
+          }
 
           console.log(`scaffold update: ${check.status}`);
           console.log(`template version: local=${check.localTemplateVersion ?? "none"} target=${check.targetTemplateVersion}`);
@@ -1678,12 +1711,32 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           toolVersion: CLI_VERSION,
         });
 
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              {
+                kind: "scaffold-update",
+                check_only: false,
+                ...result,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+
         console.log(`scaffold update: ${dryRun ? "dry-run" : "apply"} mode`);
         console.log(`status: ${result.check.status}`);
         console.log(`template version: local=${result.check.localTemplateVersion ?? "none"} target=${result.check.targetTemplateVersion}`);
         console.log(`reason: ${result.check.reason}`);
 
         if (result.check.status === "not-initialized") {
+          return;
+        }
+
+        if (!result.check.updateAvailable) {
+          console.log("scaffold update: no changes needed.");
           return;
         }
 

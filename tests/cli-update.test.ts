@@ -51,6 +51,31 @@ describe.sequential("cli update flows", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("prints machine-readable JSON for self update checks", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "npm" && args[0] === "view") {
+        return { stdout: JSON.stringify("0.2.0") };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "self", "update", "--check", "--json"]);
+
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    expect(payload.kind).toBe("tool-self-update");
+    expect(payload.executed).toBe(false);
+    const check = payload.check as Record<string, unknown>;
+    expect(check.status).toBe("update-available");
+    expect(check.latestVersion).toBe("0.2.0");
+  });
+
   it("keeps self update check non-blocking when registry is unavailable", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
@@ -116,6 +141,8 @@ describe.sequential("cli update flows", () => {
     expect(logs.some((line) => line.includes("scaffold update: dry-run mode"))).toBe(true);
     expect(logs.some((line) => line.includes("Diff preview:"))).toBe(true);
     expect(logs.some((line) => line.includes("AGENTS.md"))).toBe(true);
+    expect(logs.some((line) => line.includes("keep-my-note"))).toBe(false);
+    expect(logs.some((line) => line.includes("[vibe protected section redacted in preview]"))).toBe(true);
     expect(readFileSync(agentsPath, "utf8")).toBe(agentsBeforeDryRun);
     expect(existsSync(metadataPath)).toBe(false);
 
@@ -135,7 +162,35 @@ describe.sequential("cli update flows", () => {
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--check"]);
     expect(logs.some((line) => line.includes("scaffold update: up-to-date"))).toBe(true);
+
+    const metadataAfterApply = readFileSync(metadataPath, "utf8");
+    const agentsAfterSecondSnapshot = readFileSync(agentsPath, "utf8");
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("status: up-to-date"))).toBe(true);
+    expect(logs.some((line) => line.includes("scaffold update: no changes needed."))).toBe(true);
+    expect(logs.some((line) => line.includes("Diff preview:"))).toBe(false);
+    expect(readFileSync(metadataPath, "utf8")).toBe(metadataAfterApply);
+    expect(readFileSync(agentsPath, "utf8")).toBe(agentsAfterSecondSnapshot);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("prints machine-readable JSON for scaffold update checks", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "update", "--check", "--json"]);
+
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    expect(payload.kind).toBe("scaffold-update-check");
+    expect(payload.check_only).toBe(true);
+    expect(payload.status).toBe("not-initialized");
   });
 });
 
@@ -166,4 +221,3 @@ describe("preserveProtectedSections", () => {
     expect(merged).not.toContain("template-note");
   });
 });
-
