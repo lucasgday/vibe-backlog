@@ -21,3 +21,15 @@ This change improves dogfooding loop quality by making PR rationale sections ref
 
 ### Findings
 - none
+
+## Run 2026-02-26T18:13:47.205Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The dynamic rationale feature should improve reviewer comprehension, but the diff adds no observable diagnostics for extracted signal quality or fallback usage, limiting product learning.
+
+### Findings
+- [P3] No debug/metrics output for rationale signal extraction quality (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-rationale.ts:270)

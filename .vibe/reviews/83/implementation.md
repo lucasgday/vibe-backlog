@@ -21,3 +21,16 @@ Replaced the fixed rationale bullet sets in `src/core/pr-rationale.ts` with dete
 
 ### Findings
 - none
+
+## Run 2026-02-26T18:13:47.202Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 2
+- autofix_applied: no
+
+### Summary
+Two correctness issues were found in the new signal-driven rationale path: changed-file extraction can read against a stale local base ref, and theme detection overmatches `tracker` on issue-style branch names.
+
+### Findings
+- [P1] Changed-file signals can include unrelated upstream commits when local base branch is stale (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-open.ts:175)
+- [P2] Tracker theme heuristic matches nearly every issue branch (/Users/lucasgday/code/codex/vibe-backlog/src/core/pr-rationale.ts:215)

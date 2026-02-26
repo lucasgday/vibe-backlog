@@ -23,3 +23,15 @@ Signal extraction in `pr-open`/`review-pr` uses read-only `git diff --name-only`
 
 ### Findings
 - none
+
+## Run 2026-02-26T18:13:47.203Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No security defects were identified in the changed behavior; signal extraction is read-only git metadata and the rationale generator degrades to explicit fallback text when signals are missing.
+
+### Findings
+- none

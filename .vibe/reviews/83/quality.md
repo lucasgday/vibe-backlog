@@ -38,3 +38,15 @@
 
 ### Findings
 - none
+
+## Run 2026-02-26T18:13:47.204Z
+- run_id: review-issue-83-pr-84-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Unit coverage for rationale generation is strong, but integration coverage does not verify the new `git diff` signal plumbing in `pr open`/`review`, so the base-ref correctness bug can ship undetected.
+
+### Findings
+- [P2] CLI tests do not assert changed-file signal extraction or base-ref correctness (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-pr-open.test.ts:111)
