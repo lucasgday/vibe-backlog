@@ -74,6 +74,17 @@ function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function parseLabelNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const labels: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const name = parseNullableString((entry as JsonRecord).name);
+    if (name) labels.push(name);
+  }
+  return labels;
+}
+
 function parseIssueId(value: string | number | null | undefined): number | null {
   if (value === undefined || value === null || value === "") return null;
   const raw = typeof value === "number" ? String(value) : String(value).trim();
@@ -141,8 +152,8 @@ async function resolveTurnDefaults(): Promise<TurnResolution> {
 async function fetchIssueSnapshot(
   execaFn: ExecaFn,
   issueId: number,
-): Promise<{ title: string; url: string | null }> {
-  const response = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title,url"], {
+): Promise<{ title: string; url: string | null; labels: string[]; body: string | null }> {
+  const response = await runGhWithRetry(execaFn, ["issue", "view", String(issueId), "--json", "title,url,labels,body"], {
     stdio: "pipe",
   });
   const row = parseJsonObject(response.stdout, "gh issue view");
@@ -154,7 +165,31 @@ async function fetchIssueSnapshot(
   return {
     title,
     url: parseNullableString(row.url),
+    labels: parseLabelNames(row.labels),
+    body: parseNullableString(row.body),
   };
+}
+
+async function listChangedFilesForRationale(execaFn: ExecaFn, baseBranch: string, branch: string): Promise<string[]> {
+  const candidateArgs = [
+    ["diff", "--name-only", `${baseBranch}...${branch}`],
+    ["diff", "--name-only", "--cached"],
+  ] as const;
+
+  for (const args of candidateArgs) {
+    try {
+      const response = await execaFn("git", [...args], { stdio: "pipe" });
+      const files = response.stdout
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (files.length > 0) return files;
+    } catch {
+      // Best-effort signal extraction; rationale generation falls back explicitly.
+    }
+  }
+
+  return [];
 }
 
 async function findOpenPrByHead(execaFn: ExecaFn, branch: string): Promise<OpenPrSnapshot | null> {
@@ -187,6 +222,9 @@ export function buildPrOpenBodyTemplate(params: {
   issueTitle: string;
   issueUrl: string | null;
   branch: string;
+  issueLabels?: string[];
+  issueBody?: string | null;
+  changedFiles?: string[];
 }): string {
   const summaryLines = [`- Issue: #${params.issueId} ${params.issueTitle}`, `- Branch: \`${params.branch}\``];
   if (params.issueUrl) {
@@ -201,6 +239,11 @@ export function buildPrOpenBodyTemplate(params: {
       issueTitle: params.issueTitle,
       branch: params.branch,
       mode: "pr-open",
+      signals: {
+        issueLabels: params.issueLabels,
+        issueBody: params.issueBody,
+        changedFiles: params.changedFiles,
+      },
     },
   });
 }
@@ -217,6 +260,9 @@ async function autofillExistingPullRequestRationale(params: {
   issueId: number;
   issueTitle: string;
   branch: string;
+  issueLabels?: string[];
+  issueBody?: string | null;
+  changedFiles?: string[];
   dryRun: boolean;
 }): Promise<boolean> {
   if (params.dryRun) return false;
@@ -229,6 +275,11 @@ async function autofillExistingPullRequestRationale(params: {
     issueTitle: params.issueTitle,
     branch: params.branch,
     mode: "pr-open",
+    signals: {
+      issueLabels: params.issueLabels,
+      issueBody: params.issueBody,
+      changedFiles: params.changedFiles,
+    },
   });
   if (!result.changed) return false;
 
@@ -243,6 +294,9 @@ async function createPullRequest(params: {
   issueUrl: string | null;
   branch: string;
   baseBranch: string;
+  issueLabels?: string[];
+  issueBody?: string | null;
+  changedFiles?: string[];
   dryRun: boolean;
 }): Promise<{ number: number | null; url: string | null; title: string; body: string }> {
   const title = buildPrOpenTitle(params.issueId, params.issueTitle);
@@ -251,6 +305,9 @@ async function createPullRequest(params: {
     issueTitle: params.issueTitle,
     issueUrl: params.issueUrl,
     branch: params.branch,
+    issueLabels: params.issueLabels,
+    issueBody: params.issueBody,
+    changedFiles: params.changedFiles,
   });
 
   if (params.dryRun) {
@@ -340,6 +397,7 @@ export async function runPrOpenCommand(
   const baseFromArgs = options.baseBranchOverride?.trim() || null;
   const baseFromTurn = turnDefaults.state === "ok" ? turnDefaults.baseBranch : null;
   const baseBranch = baseFromArgs ?? baseFromTurn ?? "main";
+  const changedFiles = await listChangedFilesForRationale(execaFn, baseBranch, branch);
 
   const openPr = await findOpenPrByHead(execaFn, branch);
   if (openPr) {
@@ -350,6 +408,9 @@ export async function runPrOpenCommand(
       issueTitle: issue.title,
       issueUrl: issue.url,
       branch,
+      issueLabels: issue.labels,
+      issueBody: issue.body,
+      changedFiles,
     });
     const rationaleAutofilled = options.dryRun
       ? false
@@ -359,6 +420,9 @@ export async function runPrOpenCommand(
           issueId,
           issueTitle: issue.title,
           branch,
+          issueLabels: issue.labels,
+          issueBody: issue.body,
+          changedFiles,
           dryRun: options.dryRun,
         });
 
@@ -386,6 +450,9 @@ export async function runPrOpenCommand(
     issueUrl: issue.url,
     branch,
     baseBranch,
+    issueLabels: issue.labels,
+    issueBody: issue.body,
+    changedFiles,
     dryRun: options.dryRun,
   });
 

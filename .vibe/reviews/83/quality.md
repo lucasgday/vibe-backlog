@@ -1,0 +1,40 @@
+# Quality Pass
+
+## What I Tested
+- Commands:
+- `pnpm test`
+- `pnpm build`
+- Scenarios:
+- CLI-heavy code-change rationale generation (`code-only` profile)
+- docs-only rationale generation (`docs-only` profile)
+- mixed code+tests rationale generation (`code+tests` profile)
+- deterministic output under reordered/duplicated signal inputs
+- placeholder autofill preserving non-placeholder user text and extra sections
+
+## Checklist
+- [x] Happy path validated
+- [x] Failure/edge path validated
+- [x] Remaining gaps captured
+
+## Notes
+- Full test suite ran (repo script executes all tests even when passing a filename filter).
+
+## Run 2026-02-26T17:59:16Z
+- run_id: manual-issue-83-quality
+- findings: 0
+
+### What I Tested
+- Commands:
+- `pnpm test`
+- `pnpm build`
+- Scenarios:
+- `tests/pr-rationale.test.ts` now asserts meaningful differences across three contexts and explicit fallback text for missing changed-file signals.
+- Idempotence/determinism maintained (same inputs after dedupe/sort produce identical sections).
+- Existing CLI/review tests continued to pass, covering `pr open` and review autofill/create paths using the shared rationale generator.
+
+### Remaining Gaps
+- No live end-to-end `gh pr create/edit` run was performed against a real repository/PR body to visually inspect the new rationale text in GitHub.
+- Validation/review artifact signals are supported in the type model but not yet populated from postflight/review artifacts in command flows.
+
+### Findings
+- none

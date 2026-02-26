@@ -1,0 +1,25 @@
+# Security Pass
+
+## Threat Scan
+- Risks considered: fabricated or overconfident PR rationale text; accidental leakage via generated text; unsafe command execution during signal extraction.
+- Mitigations applied: rationale generation only uses local issue/diff metadata, best-effort `git diff --name-only` (read-only), and explicit fallback wording when changed-file/validation signals are missing.
+
+## Checklist
+- [x] Input validation paths reviewed
+- [x] Authorization/data exposure reviewed
+- [x] Error handling avoids sensitive leakage
+
+## Notes
+- No authz boundaries changed. No secrets or credential handling touched.
+
+## Run 2026-02-26T17:59:16Z
+- run_id: manual-issue-83-security
+- findings: 0
+
+### Threat Scan
+The main security risk in this issue is not code execution but trustworthiness of generated PR text: if the generator invents validation/test claims, reviewers may make bad decisions. The new implementation reduces that risk by explicitly stating when changed-file or validation signals are unavailable and by limiting claims to available metadata/diff signals.
+
+Signal extraction in `pr-open`/`review-pr` uses read-only `git diff --name-only` calls and catches failures, so missing refs or unusual repo state degrade to fallback rationale instead of causing hidden mutations or partial unsafe output. No new network calls, dependency changes, or sensitive data paths were introduced.
+
+### Findings
+- none

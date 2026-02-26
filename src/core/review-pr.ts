@@ -149,6 +149,28 @@ function extractIssueNumberFromUrl(url: string | null): number | null {
   return match ? Number(match[1]) : null;
 }
 
+async function listChangedFilesForRationale(execaFn: ExecaFn, baseBranch: string, branch: string): Promise<string[]> {
+  const candidateArgs = [
+    ["diff", "--name-only", `${baseBranch}...${branch}`],
+    ["diff", "--name-only", "--cached"],
+  ] as const;
+
+  for (const args of candidateArgs) {
+    try {
+      const response = await execaFn("git", [...args], { stdio: "pipe" });
+      const files = response.stdout
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (files.length > 0) return files;
+    } catch {
+      // Best-effort signal extraction; PR rationale falls back when unavailable.
+    }
+  }
+
+  return [];
+}
+
 function normalizeFindingText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -221,26 +243,6 @@ function buildAutoPrTitle(issueId: number, issueTitle: string): string {
   return `review: #${issueId} ${issueTitle}`;
 }
 
-function buildAutoPrBody(issueId: number, branch: string, issueTitle: string): string {
-  return buildBodyWithRationale({
-    summaryLines: [
-      `- Auto-created by \`vibe review\` for branch \`${branch}\`.`,
-      `- Target issue: #${issueId} (${issueTitle}).`,
-    ],
-    issueId,
-    context: {
-      issueId,
-      issueTitle,
-      branch,
-      mode: "review",
-    },
-    headings: {
-      why: "## Why these decisions",
-      alternatives: "## Alternatives considered",
-    },
-  });
-}
-
 export async function resolveRepoNameWithOwner(execaFn: ExecaFn): Promise<string> {
   const response = await runGhWithRetry(execaFn, ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
     stdio: "pipe",
@@ -283,13 +285,45 @@ type ResolvePrParams = {
   execaFn: ExecaFn;
   issueId: number;
   issueTitle: string;
+  issueLabels?: string[];
   branch: string;
   baseBranch: string;
   dryRun: boolean;
 };
 
+function buildAutoPrBody(params: {
+  issueId: number;
+  branch: string;
+  issueTitle: string;
+  issueLabels?: string[];
+  changedFiles?: string[];
+}): string {
+  return buildBodyWithRationale({
+    summaryLines: [
+      `- Auto-created by \`vibe review\` for branch \`${params.branch}\`.`,
+      `- Target issue: #${params.issueId} (${params.issueTitle}).`,
+    ],
+    issueId: params.issueId,
+    context: {
+      issueId: params.issueId,
+      issueTitle: params.issueTitle,
+      branch: params.branch,
+      mode: "review",
+      signals: {
+        issueLabels: params.issueLabels,
+        changedFiles: params.changedFiles,
+      },
+    },
+    headings: {
+      why: "## Why these decisions",
+      alternatives: "## Alternatives considered",
+    },
+  });
+}
+
 export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams): Promise<ReviewPrSnapshot> {
-  const { execaFn, issueId, issueTitle, branch, baseBranch, dryRun } = params;
+  const { execaFn, issueId, issueTitle, issueLabels, branch, baseBranch, dryRun } = params;
+  const changedFiles = await listChangedFilesForRationale(execaFn, baseBranch, branch);
 
   const listed = await runGhWithRetry(
     execaFn,
@@ -305,6 +339,10 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
         issueTitle,
         branch,
         mode: "review",
+        signals: {
+          issueLabels,
+          changedFiles,
+        },
       });
       if (nextBodyResult.changed) {
         await runGhWithRetry(execaFn, ["pr", "edit", String(open.number), "--body", nextBodyResult.body], {
@@ -320,7 +358,13 @@ export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams):
   }
 
   const title = buildAutoPrTitle(issueId, issueTitle);
-  const body = buildAutoPrBody(issueId, branch, issueTitle);
+  const body = buildAutoPrBody({
+    issueId,
+    issueTitle,
+    branch,
+    issueLabels,
+    changedFiles,
+  });
 
   if (dryRun) {
     return {
