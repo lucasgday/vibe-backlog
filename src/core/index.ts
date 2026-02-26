@@ -16,3 +16,4 @@ export * from "./pr-open";
 export * from "./pr-ready";
 export * from "./branch-cleanup";
 export * from "./security-scan";
+export * from "./update";

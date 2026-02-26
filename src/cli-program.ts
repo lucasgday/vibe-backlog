@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { execa } from "execa";
-import { scaffoldVibeInit } from "./core/init";
+import { applyVibeScaffoldUpdate, checkVibeScaffoldUpdate, scaffoldVibeInit } from "./core/init";
 import {
   appendIssueAutocloseReference,
   buildTrackerCommands,
@@ -43,12 +43,15 @@ import {
   SECURITY_SCAN_MODE_VALUES,
   type SecurityScanResult,
 } from "./core/security-scan";
+import { checkToolUpdate, runToolSelfUpdate } from "./core/update";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
 const GUARD_INVALID_TURN_EXIT_CODE = 3;
 const GUARD_REMEDIATION = "Run: node dist/cli.cjs turn start --issue <n>";
 const GH_API_PAGE_SIZE = 100;
+const CLI_PACKAGE_NAME = "vibe-backlog";
+const CLI_VERSION = "0.1.0";
 
 function printGhCommand(args: string[]): void {
   console.log("$ " + ["gh", ...args].join(" "));
@@ -60,6 +63,25 @@ function printPathList(title: string, paths: string[]): void {
   for (const entry of paths) {
     console.log(`- ${entry}`);
   }
+}
+
+async function printPreflightToolUpdateNotice(execaFn: ExecaFn): Promise<void> {
+  const check = await checkToolUpdate(
+    {
+      packageName: CLI_PACKAGE_NAME,
+      currentVersion: CLI_VERSION,
+      timeoutMs: 2000,
+    },
+    execaFn,
+  );
+
+  if (check.status !== "update-available" || !check.latestVersion) {
+    return;
+  }
+
+  console.log("\nTool update available:");
+  console.log(`${check.packageName}: ${check.currentVersion} -> ${check.latestVersion}`);
+  console.log("Run: node dist/cli.cjs self update");
 }
 
 function printBranchCleanupReport(result: BranchCleanupResult, context: "standalone" | "postflight"): void {
@@ -1040,7 +1062,7 @@ async function checkoutOrCreateBranch(execaFn: ExecaFn, branch: string): Promise
 export function createProgram(execaFn: ExecaFn = execa): Command {
   const program = new Command();
 
-  program.name("vibe").description("Vibe-backlog CLI (MVP)").version("0.1.0");
+  program.name("vibe").description("Vibe-backlog CLI (MVP)").version(CLI_VERSION);
 
   const turn = program.command("turn").description("Manage active local turn context");
 
@@ -1558,6 +1580,191 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
       }
     });
 
+  const self = program.command("self").description("Manage vibe CLI installation");
+
+  self
+    .command("update")
+    .description("Check for and optionally apply explicit vibe CLI updates")
+    .option("--check", "Check registry version only (no install)", false)
+    .option("--dry-run", "Print install command without executing it", false)
+    .option("--json", "Print machine-readable JSON output", false)
+    .action(async (opts) => {
+      const checkOnly = Boolean(opts.check);
+      const dryRun = Boolean(opts.dryRun);
+      const jsonOutput = Boolean(opts.json);
+
+      try {
+        const result = await runToolSelfUpdate(
+          {
+            packageName: CLI_PACKAGE_NAME,
+            currentVersion: CLI_VERSION,
+            dryRun,
+            checkOnly,
+            execStdio: jsonOutput ? "pipe" : "inherit",
+          },
+          execaFn,
+        );
+
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              {
+                kind: "tool-self-update",
+                ...result,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+
+        const commandText = "$ " + result.check.command.join(" ");
+        if (result.check.status === "unavailable") {
+          console.log("self update: unavailable");
+          console.log(result.check.reason);
+          console.log(commandText);
+          return;
+        }
+
+        if (result.check.status === "up-to-date") {
+          console.log(`self update: up-to-date (${result.check.currentVersion})`);
+          if (result.check.latestVersion) {
+            console.log(`latest: ${result.check.latestVersion}`);
+          }
+          return;
+        }
+
+        console.log(`self update: available ${result.check.currentVersion} -> ${result.check.latestVersion ?? "unknown"}`);
+        console.log(commandText);
+
+        if (checkOnly) {
+          console.log("self update: check-only mode.");
+          return;
+        }
+
+        if (dryRun) {
+          console.log("self update: dry-run complete.");
+          return;
+        }
+
+        if (result.executed) {
+          console.log("self update: DONE");
+          return;
+        }
+
+        console.log("self update: no action taken.");
+      } catch (error) {
+        console.error("self update: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("update")
+    .description("Check/apply .vibe scaffold updates for current repository")
+    .option("--check", "Check scaffold version/metadata only", false)
+    .option("--dry-run", "Preview scaffold changes without writing files", false)
+    .option("--json", "Print machine-readable JSON output", false)
+    .action(async (opts) => {
+      const checkOnly = Boolean(opts.check);
+      const dryRun = Boolean(opts.dryRun);
+      const jsonOutput = Boolean(opts.json);
+
+      try {
+        if (checkOnly) {
+          const check = await checkVibeScaffoldUpdate({
+            toolPackageName: CLI_PACKAGE_NAME,
+            toolVersion: CLI_VERSION,
+          });
+
+          if (jsonOutput) {
+            console.log(
+              JSON.stringify(
+                {
+                  kind: "scaffold-update-check",
+                  check_only: true,
+                  ...check,
+                },
+                null,
+                2,
+              ),
+            );
+            return;
+          }
+
+          console.log(`scaffold update: ${check.status}`);
+          console.log(`template version: local=${check.localTemplateVersion ?? "none"} target=${check.targetTemplateVersion}`);
+          console.log(`metadata: ${check.metadataPath}`);
+          console.log(`tool version: local=${check.localToolVersion ?? "unknown"} target=${check.targetToolVersion}`);
+          console.log(`reason: ${check.reason}`);
+
+          if (check.updateAvailable) {
+            console.log("Run: node dist/cli.cjs update --dry-run");
+            console.log("Then: node dist/cli.cjs update");
+          }
+          return;
+        }
+
+        const result = await applyVibeScaffoldUpdate({
+          dryRun,
+          toolPackageName: CLI_PACKAGE_NAME,
+          toolVersion: CLI_VERSION,
+        });
+
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              {
+                kind: "scaffold-update",
+                check_only: false,
+                ...result,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+
+        console.log(`scaffold update: ${dryRun ? "dry-run" : "apply"} mode`);
+        console.log(`status: ${result.check.status}`);
+        console.log(`template version: local=${result.check.localTemplateVersion ?? "none"} target=${result.check.targetTemplateVersion}`);
+        console.log(`reason: ${result.check.reason}`);
+
+        if (result.check.status === "not-initialized") {
+          return;
+        }
+
+        if (!result.check.updateAvailable) {
+          console.log("scaffold update: no changes needed.");
+          return;
+        }
+
+        printPathList("Created", result.created);
+        printPathList("Updated", result.updated);
+
+        if (result.previews.length) {
+          console.log("\nDiff preview:");
+          for (const preview of result.previews) {
+            console.log(`\n# ${preview.action.toUpperCase()} ${preview.filePath}`);
+            console.log(preview.preview);
+          }
+        }
+
+        if (dryRun) {
+          console.log("\nscaffold update: dry-run complete.");
+        } else {
+          console.log("\nscaffold update: DONE");
+        }
+      } catch (error) {
+        console.error("scaffold update: ERROR");
+        console.error(error);
+        process.exitCode = 1;
+      }
+    });
+
   program
     .command("init")
     .description("Initialize agent-first .vibe scaffolding in current repository")
@@ -1569,7 +1776,11 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
 
       try {
         console.log(`init: ${dryRun ? "dry-run" : "apply"} mode`);
-        const scaffoldResult = await scaffoldVibeInit({ dryRun });
+        const scaffoldResult = await scaffoldVibeInit({
+          dryRun,
+          toolPackageName: CLI_PACKAGE_NAME,
+          toolVersion: CLI_VERSION,
+        });
         printPathList("Created", scaffoldResult.created);
         printPathList("Updated", scaffoldResult.updated);
 
@@ -1968,6 +2179,12 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         }
       } catch {
         // Ignore hint failures: preflight must remain resilient.
+      }
+
+      try {
+        await printPreflightToolUpdateNotice(execaFn);
+      } catch {
+        // Ignore version-check failures: preflight must remain resilient.
       }
     });
 
