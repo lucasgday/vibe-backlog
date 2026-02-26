@@ -23,3 +23,15 @@ Scaffold updates are explicit and support dry-run previews. Protected marker sec
 
 ### Findings
 - none
+
+## Run 2026-02-26T17:19:38.693Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found one privacy/security issue in dry-run previews: protected note sections can be echoed verbatim to stdout/logs during scaffold diff preview.
+
+### Findings
+- [P2] Dry-run scaffold preview can print protected `vibe:user-notes` content (/Users/lucasgday/code/codex/vibe-backlog/src/core/init.ts:397)

@@ -32,3 +32,15 @@
 
 ### Findings
 - none
+
+## Run 2026-02-26T17:19:38.694Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Tests cover happy-path update flows and marker preservation, but they miss a regression case that would catch the apply-without-update-gate bug.
+
+### Findings
+- [P2] No test asserts that `vibe update` is a no-op when scaffold is already current/newer (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-update.test.ts:135)

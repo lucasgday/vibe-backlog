@@ -21,3 +21,15 @@ Implemented a scoped MVP for safe updates: `preflight` now performs a non-blocki
 
 ### Findings
 - none
+
+## Run 2026-02-26T17:19:38.690Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found a downgrade/no-op gating defect in the new scaffold update apply path: `vibe update` can still rewrite files even when the check reports no update is needed (including when local scaffold version is newer than the CLI target).
+
+### Findings
+- [P1] `vibe update` applies changes even when scaffold check says no update is available (/Users/lucasgday/code/codex/vibe-backlog/src/core/init.ts:553)
