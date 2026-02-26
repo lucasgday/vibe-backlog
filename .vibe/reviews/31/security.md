@@ -47,3 +47,15 @@ No new security defects identified in the current diff after the preview-redacti
 
 ### Findings
 - none
+
+## Run 2026-02-26T17:39:04.251Z
+- run_id: review-issue-31-pr-82-attempt-1-manual
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No security findings in the current diff. The dry-run preview redaction for protected marker sections is now present, and update execution remains explicit (no implicit mutation in preflight).
+
+### Findings
+- none

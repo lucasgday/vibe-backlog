@@ -56,3 +56,15 @@ Coverage is strong for the original findings and the new no-op/redaction behavio
 
 ### Findings
 - [P3] No test covers `self update --json` when an update is actually executed (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-update.test.ts:54)
+
+## Run 2026-02-26T17:39:04.251Z
+- run_id: review-issue-31-pr-82-attempt-1-manual
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Coverage is materially improved in the current diff: tests now cover scaffold no-op behavior, preview redaction, JSON output, and JSON apply-path execution for `self update`. No additional test gaps were identified that block this PR.
+
+### Findings
+- none
