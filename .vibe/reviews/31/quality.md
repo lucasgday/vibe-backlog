@@ -44,3 +44,15 @@ Tests cover happy-path update flows and marker preservation, but they miss a reg
 
 ### Findings
 - [P2] No test asserts that `vibe update` is a no-op when scaffold is already current/newer (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-update.test.ts:135)
+
+## Run 2026-02-26T17:33:53.343Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage is strong for the original findings and the new no-op/redaction behaviors, but one test gap remains around the new JSON apply path for `self update`.
+
+### Findings
+- [P3] No test covers `self update --json` when an update is actually executed (/Users/lucasgday/code/codex/vibe-backlog/tests/cli-update.test.ts:54)

@@ -33,3 +33,15 @@ One low-severity product-growth/instrumentation opportunity identified in the ne
 
 ### Findings
 - [P3] Update commands expose only human-readable output, limiting automation and adoption nudges (/Users/lucasgday/code/codex/vibe-backlog/src/cli-program.ts:1662)
+
+## Run 2026-02-26T17:33:53.344Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new growth blockers identified in this revision; adding `--json` output is a positive step toward automation/instrumentation for update adoption.
+
+### Findings
+- none

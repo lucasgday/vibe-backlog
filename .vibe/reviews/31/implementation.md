@@ -33,3 +33,15 @@ Found a downgrade/no-op gating defect in the new scaffold update apply path: `vi
 
 ### Findings
 - [P1] `vibe update` applies changes even when scaffold check says no update is available (/Users/lucasgday/code/codex/vibe-backlog/src/core/init.ts:553)
+
+## Run 2026-02-26T17:33:53.342Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+One functional issue remains in the new `--json` path for `self update`: apply-mode output is not reliably machine-readable when an update is actually executed.
+
+### Findings
+- [P2] `self update --json` can emit non-JSON output before the JSON payload (/Users/lucasgday/code/codex/vibe-backlog/src/core/update.ts:170)

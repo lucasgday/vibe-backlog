@@ -35,3 +35,15 @@ Found one privacy/security issue in dry-run previews: protected note sections ca
 
 ### Findings
 - [P2] Dry-run scaffold preview can print protected `vibe:user-notes` content (/Users/lucasgday/code/codex/vibe-backlog/src/core/init.ts:397)
+
+## Run 2026-02-26T17:33:53.343Z
+- run_id: review-issue-31-pr-82-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new security defects identified in the current diff after the preview-redaction fix; update flows remain explicit and preflight failures stay non-blocking.
+
+### Findings
+- none
