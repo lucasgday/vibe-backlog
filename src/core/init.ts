@@ -10,12 +10,66 @@ export type InitScaffoldResult = {
 type InitScaffoldOptions = {
   cwd?: string;
   dryRun: boolean;
+  toolPackageName?: string;
+  toolVersion?: string;
+};
+
+type ToolIdentity = {
+  packageName: string;
+  version: string;
+};
+
+type ProtectedSectionMarker = {
+  start: string;
+  end: string;
+};
+
+export type VibeScaffoldCheckStatus = "not-initialized" | "up-to-date" | "update-available";
+
+export type VibeScaffoldCheckResult = {
+  status: VibeScaffoldCheckStatus;
+  updateAvailable: boolean;
+  reason: string;
+  targetTemplateVersion: number;
+  localTemplateVersion: number | null;
+  metadataPath: string;
+  localToolVersion: string | null;
+  targetToolVersion: string;
+};
+
+export type VibeScaffoldDiffPreview = {
+  filePath: string;
+  action: "create" | "update";
+  preview: string;
+};
+
+export type VibeScaffoldUpdateResult = InitScaffoldResult & {
+  check: VibeScaffoldCheckResult;
+  dryRun: boolean;
+  applied: boolean;
+  previews: VibeScaffoldDiffPreview[];
+};
+
+type VibeScaffoldUpdateOptions = {
+  cwd?: string;
+  dryRun: boolean;
+  toolPackageName?: string;
+  toolVersion?: string;
 };
 
 const VIBE_DIRECTORIES = [".vibe", ".vibe/runtime", ".vibe/artifacts", ".vibe/templates", ".vibe/reviews", ".vibe/pills"];
 const AGENT_SNIPPET_START = "<!-- vibe:agent-snippet:start -->";
 const AGENT_SNIPPET_END = "<!-- vibe:agent-snippet:end -->";
 const TRACKER_GITIGNORE_ENTRIES = [".vibe/runtime", ".vibe/artifacts"];
+const DEFAULT_TOOL_PACKAGE_NAME = "vibe-backlog";
+const DEFAULT_TOOL_VERSION = "0.1.0";
+export const VIBE_SCAFFOLD_TEMPLATE_VERSION = 2;
+const SCAFFOLD_METADATA_RELATIVE_PATH = path.join(".vibe", "scaffold.json");
+const PREVIEW_LINE_LIMIT = 160;
+const PROTECTED_SECTION_MARKERS: readonly ProtectedSectionMarker[] = [
+  { start: "<!-- vibe:user-notes:start -->", end: "<!-- vibe:user-notes:end -->" },
+  { start: "<!-- vibe:agent-log:start -->", end: "<!-- vibe:agent-log:end -->" },
+];
 
 const DEFAULT_CONTRACT_YAML = `version: 1
 project:
@@ -95,6 +149,19 @@ function buildDefaultPostflightJson(now: string): string {
   return `${JSON.stringify(payload, null, 2)}\n`;
 }
 
+function buildScaffoldMetadataJson(identity: ToolIdentity): string {
+  const payload = {
+    version: 1,
+    scaffold_template_version: VIBE_SCAFFOLD_TEMPLATE_VERSION,
+    tool: {
+      package: identity.packageName,
+      version: identity.version,
+    },
+  };
+
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
 function buildAgentSnippetBlock(): string {
   const body = [
     "## Vibe Agent Workflow (Managed)",
@@ -116,8 +183,116 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    const entry = await stat(filePath);
+    return entry.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function pushChange(result: InitScaffoldResult, kind: keyof InitScaffoldResult, filePath: string): void {
   result[kind].push(filePath);
+}
+
+function resolveToolIdentity(options?: { toolPackageName?: string; toolVersion?: string }): ToolIdentity {
+  const packageName =
+    typeof options?.toolPackageName === "string" && options.toolPackageName.trim()
+      ? options.toolPackageName.trim()
+      : DEFAULT_TOOL_PACKAGE_NAME;
+  const version =
+    typeof options?.toolVersion === "string" && options.toolVersion.trim() ? options.toolVersion.trim() : DEFAULT_TOOL_VERSION;
+
+  return { packageName, version };
+}
+
+function splitPreviewLines(content: string): string[] {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.length) return [];
+  const trimmed = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+  if (!trimmed.length) return [];
+  return trimmed.split("\n");
+}
+
+function renderDiffPreview(filePath: string, before: string | null, after: string): string {
+  const lines = [`--- ${filePath}`, `+++ ${filePath}`];
+
+  if (before !== null) {
+    for (const line of splitPreviewLines(before)) {
+      lines.push(`-${line}`);
+    }
+  }
+  for (const line of splitPreviewLines(after)) {
+    lines.push(`+${line}`);
+  }
+
+  if (lines.length <= PREVIEW_LINE_LIMIT) {
+    return lines.join("\n");
+  }
+
+  return [...lines.slice(0, PREVIEW_LINE_LIMIT), "... (truncated)"].join("\n");
+}
+
+function recordPreview(
+  previews: VibeScaffoldDiffPreview[] | undefined,
+  filePath: string,
+  before: string | null,
+  after: string,
+): void {
+  if (!previews) return;
+  previews.push({
+    filePath,
+    action: before === null ? "create" : "update",
+    preview: renderDiffPreview(filePath, before, after),
+  });
+}
+
+function isLineBoundaryChar(value: string | undefined): boolean {
+  return value === undefined || value === "\n" || value === "\r";
+}
+
+function findStandaloneMarkerIndex(content: string, markerText: string, fromIndex = 0): number {
+  let searchIndex = Math.max(0, fromIndex);
+
+  while (searchIndex < content.length) {
+    const candidate = content.indexOf(markerText, searchIndex);
+    if (candidate < 0) return -1;
+
+    const before = candidate > 0 ? content[candidate - 1] : undefined;
+    const after = content[candidate + markerText.length];
+    if (isLineBoundaryChar(before) && isLineBoundaryChar(after)) {
+      return candidate;
+    }
+
+    searchIndex = candidate + markerText.length;
+  }
+
+  return -1;
+}
+
+function findMarkedSectionRange(content: string, marker: ProtectedSectionMarker): { start: number; end: number } | null {
+  const startIndex = findStandaloneMarkerIndex(content, marker.start);
+  if (startIndex < 0) return null;
+  const endMarkerIndex = findStandaloneMarkerIndex(content, marker.end, startIndex + marker.start.length);
+  if (endMarkerIndex < 0) return null;
+  return { start: startIndex, end: endMarkerIndex + marker.end.length };
+}
+
+export function preserveProtectedSections(templateContent: string, currentContent: string): string {
+  let next = templateContent;
+
+  for (const marker of PROTECTED_SECTION_MARKERS) {
+    const currentRange = findMarkedSectionRange(currentContent, marker);
+    if (!currentRange) continue;
+    const nextRange = findMarkedSectionRange(next, marker);
+    if (!nextRange) continue;
+
+    const currentSection = currentContent.slice(currentRange.start, currentRange.end);
+    next = `${next.slice(0, nextRange.start)}${currentSection}${next.slice(nextRange.end)}`;
+  }
+
+  return next;
 }
 
 async function ensureDirectory(dirPath: string, dryRun: boolean, result: InitScaffoldResult): Promise<void> {
@@ -145,7 +320,45 @@ async function ensureFile(filePath: string, content: string, dryRun: boolean, re
   pushChange(result, "created", filePath);
 }
 
-async function upsertAgentSnippet(agentsPath: string, dryRun: boolean, result: InitScaffoldResult): Promise<void> {
+async function upsertManagedTextFile(
+  filePath: string,
+  content: string,
+  dryRun: boolean,
+  result: InitScaffoldResult,
+  previews?: VibeScaffoldDiffPreview[],
+): Promise<void> {
+  const exists = await pathExists(filePath);
+  if (!exists) {
+    if (!dryRun) {
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, content, "utf8");
+    }
+    pushChange(result, "created", filePath);
+    recordPreview(previews, filePath, null, content);
+    return;
+  }
+
+  const current = await readFile(filePath, "utf8");
+  const next = preserveProtectedSections(content, current);
+
+  if (next === current) {
+    pushChange(result, "unchanged", filePath);
+    return;
+  }
+
+  if (!dryRun) {
+    await writeFile(filePath, next, "utf8");
+  }
+  pushChange(result, "updated", filePath);
+  recordPreview(previews, filePath, current, next);
+}
+
+async function upsertAgentSnippet(
+  agentsPath: string,
+  dryRun: boolean,
+  result: InitScaffoldResult,
+  previews?: VibeScaffoldDiffPreview[],
+): Promise<void> {
   const snippet = buildAgentSnippetBlock();
   const agentsExists = await pathExists(agentsPath);
 
@@ -155,6 +368,7 @@ async function upsertAgentSnippet(agentsPath: string, dryRun: boolean, result: I
       await writeFile(agentsPath, content, "utf8");
     }
     pushChange(result, "created", agentsPath);
+    recordPreview(previews, agentsPath, null, content);
     return;
   }
 
@@ -180,9 +394,15 @@ async function upsertAgentSnippet(agentsPath: string, dryRun: boolean, result: I
     await writeFile(agentsPath, next, "utf8");
   }
   pushChange(result, "updated", agentsPath);
+  recordPreview(previews, agentsPath, current, next);
 }
 
-async function upsertGitignoreEntries(gitignorePath: string, dryRun: boolean, result: InitScaffoldResult): Promise<void> {
+async function upsertGitignoreEntries(
+  gitignorePath: string,
+  dryRun: boolean,
+  result: InitScaffoldResult,
+  previews?: VibeScaffoldDiffPreview[],
+): Promise<void> {
   const exists = await pathExists(gitignorePath);
   if (!exists) {
     const content = `${TRACKER_GITIGNORE_ENTRIES.join("\n")}\n`;
@@ -190,6 +410,7 @@ async function upsertGitignoreEntries(gitignorePath: string, dryRun: boolean, re
       await writeFile(gitignorePath, content, "utf8");
     }
     pushChange(result, "created", gitignorePath);
+    recordPreview(previews, gitignorePath, null, content);
     return;
   }
 
@@ -213,11 +434,156 @@ async function upsertGitignoreEntries(gitignorePath: string, dryRun: boolean, re
     await writeFile(gitignorePath, next, "utf8");
   }
   pushChange(result, "updated", gitignorePath);
+  recordPreview(previews, gitignorePath, current, next);
+}
+
+async function readScaffoldMetadataVersions(
+  metadataPath: string,
+): Promise<{ exists: boolean; templateVersion: number | null; toolVersion: string | null }> {
+  if (!(await pathExists(metadataPath))) {
+    return { exists: false, templateVersion: null, toolVersion: null };
+  }
+
+  try {
+    const raw = await readFile(metadataPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const templateVersionRaw = parsed.scaffold_template_version;
+    const templateVersion =
+      typeof templateVersionRaw === "number" && Number.isSafeInteger(templateVersionRaw) ? templateVersionRaw : null;
+    const tool =
+      typeof parsed.tool === "object" && parsed.tool !== null ? (parsed.tool as Record<string, unknown>) : null;
+    const toolVersion = typeof tool?.version === "string" ? tool.version : null;
+    return { exists: true, templateVersion, toolVersion };
+  } catch {
+    return { exists: true, templateVersion: null, toolVersion: null };
+  }
+}
+
+export async function checkVibeScaffoldUpdate(
+  options: { cwd?: string; toolPackageName?: string; toolVersion?: string } = {},
+): Promise<VibeScaffoldCheckResult> {
+  const cwd = options.cwd ?? process.cwd();
+  const metadataPath = path.join(cwd, SCAFFOLD_METADATA_RELATIVE_PATH);
+  const identity = resolveToolIdentity(options);
+  const targetTemplateVersion = VIBE_SCAFFOLD_TEMPLATE_VERSION;
+
+  if (!(await isDirectory(path.join(cwd, ".vibe")))) {
+    return {
+      status: "not-initialized",
+      updateAvailable: false,
+      reason: "No .vibe directory found in current workspace.",
+      targetTemplateVersion,
+      localTemplateVersion: null,
+      metadataPath,
+      localToolVersion: null,
+      targetToolVersion: identity.version,
+    };
+  }
+
+  const metadata = await readScaffoldMetadataVersions(metadataPath);
+  if (!metadata.exists) {
+    return {
+      status: "update-available",
+      updateAvailable: true,
+      reason: "Scaffold metadata missing; run `vibe update` to write baseline metadata.",
+      targetTemplateVersion,
+      localTemplateVersion: null,
+      metadataPath,
+      localToolVersion: null,
+      targetToolVersion: identity.version,
+    };
+  }
+
+  if (metadata.templateVersion === null) {
+    return {
+      status: "update-available",
+      updateAvailable: true,
+      reason: "Scaffold metadata is missing/invalid template version.",
+      targetTemplateVersion,
+      localTemplateVersion: null,
+      metadataPath,
+      localToolVersion: metadata.toolVersion,
+      targetToolVersion: identity.version,
+    };
+  }
+
+  if (metadata.templateVersion < targetTemplateVersion) {
+    return {
+      status: "update-available",
+      updateAvailable: true,
+      reason: `Scaffold template ${metadata.templateVersion} is behind target ${targetTemplateVersion}.`,
+      targetTemplateVersion,
+      localTemplateVersion: metadata.templateVersion,
+      metadataPath,
+      localToolVersion: metadata.toolVersion,
+      targetToolVersion: identity.version,
+    };
+  }
+
+  return {
+    status: "up-to-date",
+    updateAvailable: false,
+    reason:
+      metadata.templateVersion > targetTemplateVersion
+        ? `Local scaffold template ${metadata.templateVersion} is newer than this CLI target ${targetTemplateVersion}.`
+        : "Scaffold template is up to date.",
+    targetTemplateVersion,
+    localTemplateVersion: metadata.templateVersion,
+    metadataPath,
+    localToolVersion: metadata.toolVersion,
+    targetToolVersion: identity.version,
+  };
+}
+
+export async function applyVibeScaffoldUpdate(options: VibeScaffoldUpdateOptions): Promise<VibeScaffoldUpdateResult> {
+  const cwd = options.cwd ?? process.cwd();
+  const dryRun = options.dryRun;
+  const identity = resolveToolIdentity(options);
+  const check = await checkVibeScaffoldUpdate({ cwd, toolPackageName: identity.packageName, toolVersion: identity.version });
+  const result: VibeScaffoldUpdateResult = {
+    check,
+    dryRun,
+    applied: false,
+    previews: [],
+    created: [],
+    updated: [],
+    unchanged: [],
+  };
+
+  if (check.status === "not-initialized") {
+    return result;
+  }
+
+  for (const relativeDir of VIBE_DIRECTORIES) {
+    await ensureDirectory(path.join(cwd, relativeDir), dryRun, result);
+  }
+
+  await upsertManagedTextFile(path.join(cwd, ".vibe", "contract.yml"), DEFAULT_CONTRACT_YAML, dryRun, result, result.previews);
+  await upsertManagedTextFile(path.join(cwd, ".vibe", "ownership.yml"), DEFAULT_OWNERSHIP_YAML, dryRun, result, result.previews);
+  await ensureFile(
+    path.join(cwd, ".vibe", "artifacts", "postflight.json"),
+    buildDefaultPostflightJson(new Date().toISOString()),
+    dryRun,
+    result,
+  );
+  await upsertManagedTextFile(
+    path.join(cwd, SCAFFOLD_METADATA_RELATIVE_PATH),
+    buildScaffoldMetadataJson(identity),
+    dryRun,
+    result,
+    result.previews,
+  );
+  await upsertAgentSnippet(path.join(cwd, "AGENTS.md"), dryRun, result, result.previews);
+  await upsertGitignoreEntries(path.join(cwd, ".gitignore"), dryRun, result, result.previews);
+
+  result.applied = !dryRun;
+  return result;
 }
 
 export async function scaffoldVibeInit(options: InitScaffoldOptions): Promise<InitScaffoldResult> {
   const cwd = options.cwd ?? process.cwd();
   const dryRun = options.dryRun;
+  const identity = resolveToolIdentity(options);
   const result: InitScaffoldResult = {
     created: [],
     updated: [],
@@ -230,6 +596,7 @@ export async function scaffoldVibeInit(options: InitScaffoldOptions): Promise<In
 
   await ensureFile(path.join(cwd, ".vibe", "contract.yml"), DEFAULT_CONTRACT_YAML, dryRun, result);
   await ensureFile(path.join(cwd, ".vibe", "ownership.yml"), DEFAULT_OWNERSHIP_YAML, dryRun, result);
+  await ensureFile(path.join(cwd, SCAFFOLD_METADATA_RELATIVE_PATH), buildScaffoldMetadataJson(identity), dryRun, result);
   await ensureFile(
     path.join(cwd, ".vibe", "artifacts", "postflight.json"),
     buildDefaultPostflightJson(new Date().toISOString()),

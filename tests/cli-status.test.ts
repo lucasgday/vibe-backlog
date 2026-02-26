@@ -168,6 +168,38 @@ describe.sequential("cli status and preflight snapshots", () => {
     expect(logs.some((line) => line.includes("none"))).toBe(true);
   });
 
+  it("prints a non-blocking tool update notice in preflight when newer version exists", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (args[0] === "status" && args[1] === "-sb") {
+        return { stdout: "## main" };
+      }
+      if (args[0] === "issue" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gitleaks" && args[0] === "version") {
+        return { stdout: "8.24.2\n", stderr: "", exitCode: 0 };
+      }
+      if (cmd === "npm" && args[0] === "view") {
+        return { stdout: JSON.stringify("0.2.0") };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "preflight"]);
+
+    expect(logs.some((line) => line.includes("Tool update available:"))).toBe(true);
+    expect(logs.some((line) => line.includes("vibe-backlog: 0.1.0 -> 0.2.0"))).toBe(true);
+    expect(logs.some((line) => line.includes("Run: node dist/cli.cjs self update"))).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it("prints read-only semantic milestone suggestions in preflight", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
