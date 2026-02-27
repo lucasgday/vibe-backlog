@@ -209,6 +209,34 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("review: issue=#42"))).toBe(true);
   });
 
+  it("emits progress logs during long review phases", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "progress logs", url: "https://example.test/issues/42", milestone: null, labels: [] }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-progress", findingsCount: 0 }) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--dry-run", "--issue", "42", "--no-publish"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs.some((line) => line.includes("review: progress: flow=review max_attempts=5"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: progress: attempt 1/5: review agent: started"))).toBe(true);
+    expect(logs.some((line) => line.includes("review: progress: completed attempts=1/5 unresolved=0 termination=completed"))).toBe(true);
+  });
+
   it("retries transient provider invocation errors with compute-class policy", async () => {
     process.env.VIBE_REVIEW_CODEX_CMD = "cat";
 

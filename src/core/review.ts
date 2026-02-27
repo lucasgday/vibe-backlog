@@ -13,6 +13,7 @@ import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from 
 import {
   buildReviewSummaryBody,
   buildReviewPolicyKey,
+  cleanupPendingReviewDrafts,
   closeResolvedReviewFollowUpIssues,
   computeFindingFingerprint,
   createReviewFollowUpIssue,
@@ -66,6 +67,7 @@ export type ReviewCommandOptions = {
   followupLabel: "bug" | "enhancement" | null;
   computeClass?: string | null;
   flowKind?: ReviewFlowKind;
+  onProgress?: (message: string) => void;
 };
 
 export type ReviewCommandResult = {
@@ -509,6 +511,43 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function emitProgress(onProgress: ReviewCommandOptions["onProgress"], message: string): void {
+  if (!onProgress) return;
+  try {
+    onProgress(message);
+  } catch {
+    // Ignore progress callback failures.
+  }
+}
+
+async function runWithProgressHeartbeat<T>(
+  onProgress: ReviewCommandOptions["onProgress"],
+  label: string,
+  work: () => Promise<T>,
+  intervalMs = 15_000,
+): Promise<T> {
+  emitProgress(onProgress, `${label}: started`);
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    emitProgress(onProgress, `${label}: running (${elapsedSeconds}s elapsed)`);
+  }, intervalMs);
+  if (typeof timer.unref === "function") timer.unref();
+
+  try {
+    const result = await work();
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    emitProgress(onProgress, `${label}: completed (${elapsedSeconds}s)`);
+    return result;
+  } catch (error) {
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    emitProgress(onProgress, `${label}: failed (${elapsedSeconds}s) ${formatErrorMessage(error)}`);
+    throw error;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 function buildOutcomeSummaryMarkdown(params: {
   issueId: number;
   issueTitle: string;
@@ -673,13 +712,17 @@ export async function runReviewCommand(
 ): Promise<ReviewCommandResult> {
   const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
   const flowKind = options.flowKind ?? "review";
+  const onProgress = options.onProgress;
+  emitProgress(onProgress, `flow=${flowKind} max_attempts=${maxAttempts}`);
 
+  emitProgress(onProgress, "resolving issue/branch context");
   const context = await resolveReviewRunContext(
     execaFn,
     options.issueOverride,
     options.branchOverride,
     options.baseBranchOverride,
   );
+  emitProgress(onProgress, `context issue=#${context.issueId} branch=${context.branch} base=${context.baseBranch}`);
 
   if (!options.dryRun) {
     if (context.branch !== context.currentBranch) {
@@ -702,10 +745,15 @@ export async function runReviewCommand(
     agentCmdOption: options.agentCmd,
     agentProviderOption: options.agentProvider,
   });
+  emitProgress(
+    onProgress,
+    `agent plan mode=${executionPlan.mode} source=${executionPlan.source}${executionPlan.mode === "provider" ? ` provider=${executionPlan.provider}` : ""}`,
+  );
   if (!options.dryRun) {
     await persistReviewProviderSelection(executionPlan);
   }
 
+  emitProgress(onProgress, `loading issue #${context.issueId}`);
   const issue = await fetchIssueSnapshot(execaFn, context.issueId);
   const executionPolicy = resolveReviewExecutionPolicy({
     flow: flowKind,
@@ -723,6 +771,7 @@ export async function runReviewCommand(
     passProfile: executionPolicy.passProfile,
   });
   const repo = await resolveRepoNameWithOwner(execaFn);
+  emitProgress(onProgress, `ensuring PR for branch ${context.branch}`);
   const pr = await resolveOrCreateReviewPullRequest({
     execaFn,
     issueId: context.issueId,
@@ -749,43 +798,55 @@ export async function runReviewCommand(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attemptsUsed = attempt;
+    emitProgress(onProgress, `attempt ${attempt}/${maxAttempts}: invoking review agent`);
 
-    const run = await runReviewAgent({
-      execaFn,
-      plan: executionPlan,
-      invocationRetry: {
-        maxInvocations: executionPolicy.agentInvocationRetryBudget,
-      },
-      input: {
-        version: 1,
-        workspace_root: process.cwd(),
-        repo,
-        issue: {
-          id: context.issueId,
-          title: issue.title,
-          url: issue.url,
-        },
-        branch: context.branch,
-        base_branch: context.baseBranch,
-        pr: {
-          number: pr.number,
-          url: pr.url,
-        },
-        attempt,
-        max_attempts: maxAttempts,
-        autofix: options.autofix,
-        passes: REVIEW_PASS_ORDER,
-        review_policy: {
-          compute_class: executionPolicy.computeClass,
-          pass_profile: executionPolicy.passProfile,
-          active_passes: executionPolicy.activePasses,
-          skipped_passes: executionPolicy.skippedPasses,
-          agent_invocation_retry_budget: executionPolicy.agentInvocationRetryBudget,
-        },
-      },
-    });
+    const run = await runWithProgressHeartbeat(
+      onProgress,
+      `attempt ${attempt}/${maxAttempts}: review agent`,
+      () =>
+        runReviewAgent({
+          execaFn,
+          plan: executionPlan,
+          invocationRetry: {
+            maxInvocations: executionPolicy.agentInvocationRetryBudget,
+          },
+          input: {
+            version: 1,
+            workspace_root: process.cwd(),
+            repo,
+            issue: {
+              id: context.issueId,
+              title: issue.title,
+              url: issue.url,
+            },
+            branch: context.branch,
+            base_branch: context.baseBranch,
+            pr: {
+              number: pr.number,
+              url: pr.url,
+            },
+            attempt,
+            max_attempts: maxAttempts,
+            autofix: options.autofix,
+            passes: REVIEW_PASS_ORDER,
+            review_policy: {
+              compute_class: executionPolicy.computeClass,
+              pass_profile: executionPolicy.passProfile,
+              active_passes: executionPolicy.activePasses,
+              skipped_passes: executionPolicy.skippedPasses,
+              agent_invocation_retry_budget: executionPolicy.agentInvocationRetryBudget,
+            },
+          },
+        }),
+      20_000,
+    );
 
     const output = run.output;
+    const findings = flattenReviewFindings(output);
+    emitProgress(
+      onProgress,
+      `attempt ${attempt}/${maxAttempts}: run_id=${output.run_id} findings=${findings.length} autofix=${output.autofix.applied ? "yes" : "no"} changed=${output.autofix.changed_files.length}`,
+    );
     finalOutput = output;
     providerRunner = run.runner;
     resumeAttempted = resumeAttempted || run.resumeAttempted;
@@ -804,7 +865,6 @@ export async function runReviewCommand(
       }
     }
 
-    const findings = flattenReviewFindings(output);
     for (const finding of findings) {
       const fingerprint = computeFindingFingerprint(finding);
       if (!allFindingsByFingerprint.has(fingerprint)) {
@@ -886,6 +946,7 @@ export async function runReviewCommand(
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
+    emitProgress(onProgress, "creating follow-up issue for unresolved findings");
     followUp = await createReviewFollowUpIssue({
       execaFn,
       sourceIssueId: context.issueId,
@@ -898,6 +959,7 @@ export async function runReviewCommand(
     });
   }
   if (unresolvedFindings.length === 0 && !options.dryRun) {
+    emitProgress(onProgress, "closing resolved follow-up issues");
     const closeResult = await closeResolvedReviewFollowUpIssues({
       execaFn,
       sourceIssueId: context.issueId,
@@ -909,16 +971,43 @@ export async function runReviewCommand(
 
   if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
     try {
-      threadResolution = await resolveReviewThreads(
-        {
-          prNumber: pr.number,
-          threadIds: [],
-          allUnresolved: true,
-          bodyOverride: null,
-          dryRun: false,
-          vibeManagedOnly: true,
-        },
-        execaFn,
+      const preCleanup = await runWithProgressHeartbeat(
+        onProgress,
+        "cleanup pending review drafts (pre-thread-resolve)",
+        () =>
+          cleanupPendingReviewDrafts({
+            execaFn,
+            repo,
+            prNumber: pr.number,
+            dryRun: false,
+          }),
+      );
+      if (preCleanup.pendingFound > 0) {
+        emitProgress(
+          onProgress,
+          `cleanup pending review drafts (pre-thread-resolve): found=${preCleanup.pendingFound} deleted=${preCleanup.deleted} skipped=${preCleanup.skipped}`,
+        );
+      }
+    } catch {
+      // Best-effort cleanup; ignore failures to keep review flow deterministic.
+    }
+
+    try {
+      threadResolution = await runWithProgressHeartbeat(
+        onProgress,
+        "auto-resolve vibe-managed review threads",
+        () =>
+          resolveReviewThreads(
+            {
+              prNumber: pr.number,
+              threadIds: [],
+              allUnresolved: true,
+              bodyOverride: null,
+              dryRun: false,
+              vibeManagedOnly: true,
+            },
+            execaFn,
+          ),
       );
 
       if (threadResolution.failed > 0) {
@@ -934,12 +1023,17 @@ export async function runReviewCommand(
   let findingTotals = currentRunFindingTotals;
   if (!options.dryRun && pr.number > 0) {
     try {
-      const lifecycleTotals = await summarizeReviewThreadLifecycleTotals(
-        {
-          prNumber: pr.number,
-          vibeManagedOnly: true,
-        },
-        execaFn,
+      const lifecycleTotals = await runWithProgressHeartbeat(
+        onProgress,
+        "collect lifecycle finding totals from review threads",
+        () =>
+          summarizeReviewThreadLifecycleTotals(
+            {
+              prNumber: pr.number,
+              vibeManagedOnly: true,
+            },
+            execaFn,
+          ),
       );
 
       const currentObservedFindingKeys = toFindingKeySet(allFindings);
@@ -1027,6 +1121,7 @@ export async function runReviewCommand(
   });
 
   if (!options.dryRun) {
+    emitProgress(onProgress, "appending review summary to postflight artifact");
     await appendReviewSummaryToPostflight({
       summary,
       issueId: context.issueId,
@@ -1036,7 +1131,9 @@ export async function runReviewCommand(
 
   let committed = false;
   if (!options.dryRun && options.autopush) {
-    committed = await commitAndPushChanges(execaFn, finalOutput.run_id);
+    committed = await runWithProgressHeartbeat(onProgress, "git commit/push autofix", () =>
+      commitAndPushChanges(execaFn, finalOutput.run_id),
+    );
     const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
     if (trackedChangesRemain) {
       throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
@@ -1051,15 +1148,49 @@ export async function runReviewCommand(
   }
 
   if (options.publish) {
-    await publishReviewToPullRequest({
-      execaFn,
-      repo,
-      pr,
-      summaryBody: buildReviewSummaryBody(summary, summaryHeadSha, { policyKey: reviewPolicyKey }),
-      findings: unresolvedFindings,
-      dryRun: options.dryRun,
-    });
+    await runWithProgressHeartbeat(
+      onProgress,
+      `publish review artifacts to PR #${pr.number}`,
+      () =>
+        publishReviewToPullRequest({
+          execaFn,
+          repo,
+          pr,
+          summaryBody: buildReviewSummaryBody(summary, summaryHeadSha, { policyKey: reviewPolicyKey }),
+          findings: unresolvedFindings,
+          dryRun: options.dryRun,
+        }),
+    );
   }
+
+  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    try {
+      const postCleanup = await runWithProgressHeartbeat(
+        onProgress,
+        "cleanup pending review drafts (post-publish)",
+        () =>
+          cleanupPendingReviewDrafts({
+            execaFn,
+            repo,
+            prNumber: pr.number,
+            dryRun: false,
+          }),
+      );
+      if (postCleanup.pendingFound > 0) {
+        emitProgress(
+          onProgress,
+          `cleanup pending review drafts (post-publish): found=${postCleanup.pendingFound} deleted=${postCleanup.deleted} skipped=${postCleanup.skipped}`,
+        );
+      }
+    } catch {
+      // Best-effort cleanup; ignore failures to keep review flow deterministic.
+    }
+  }
+
+  emitProgress(
+    onProgress,
+    `completed attempts=${attemptsUsed}/${maxAttempts} unresolved=${unresolvedFindings.length} termination=${terminationReason}`,
+  );
 
   const exitCode = unresolvedFindings.length > 0 && options.strict ? REVIEW_UNRESOLVED_FINDINGS_EXIT_CODE : 0;
 

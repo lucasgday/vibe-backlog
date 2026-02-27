@@ -23,6 +23,7 @@ const REVIEW_FOLLOWUP_SOURCE_MARKER_PREFIX = "<!-- vibe:review-followup:source-i
 const REVIEW_FOLLOWUP_SOURCE_MARKER_REGEX = /<!-- vibe:review-followup:source-issue:(\d+) -->/i;
 const REVIEW_FINGERPRINT_MARKER_PREFIX = "<!-- vibe:fingerprint:";
 const REVIEW_FINGERPRINT_MARKER_REGEX = /<!-- vibe:fingerprint:([a-f0-9]+) -->/g;
+const REVIEW_THREADS_RESOLVE_MARKER = "Resolved via `vibe review threads resolve`.";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -46,6 +47,13 @@ export type ReviewPublishResult = {
   summaryCommentId: number | null;
   inlinePublished: number;
   inlineSkipped: number;
+};
+
+export type PendingReviewDraftCleanupResult = {
+  actorLogin: string | null;
+  pendingFound: number;
+  deleted: number;
+  skipped: number;
 };
 
 export type FollowUpIssue = {
@@ -636,6 +644,162 @@ type PublishReviewParams = {
   findings: ReviewFinding[];
   dryRun: boolean;
 };
+
+function parseReviewAuthorLogin(review: JsonRecord): string | null {
+  const user = typeof review.user === "object" && review.user !== null ? (review.user as JsonRecord) : null;
+  if (!user) return null;
+  const login = parseNullableString(user.login);
+  return login ? login.toLowerCase() : null;
+}
+
+function isPendingReview(review: JsonRecord): boolean {
+  const state = parseNullableString(review.state);
+  return state?.toUpperCase() === "PENDING";
+}
+
+function parseReviewId(review: JsonRecord): number | null {
+  return parsePositiveInt(review.id);
+}
+
+function parsePullRequestReviewId(value: unknown): number | null {
+  return parsePositiveInt(value);
+}
+
+function isVibeManagedReviewText(body: string | null): boolean {
+  if (!body) return false;
+  return (
+    body.includes(REVIEW_FINGERPRINT_MARKER_PREFIX) ||
+    body.includes(REVIEW_THREADS_RESOLVE_MARKER) ||
+    body.includes("vibe review threads resolve")
+  );
+}
+
+async function resolveAuthenticatedUserLogin(execaFn: ExecaFn): Promise<string | null> {
+  const response = await runGhWithRetry(execaFn, ["api", "user"], { stdio: "pipe" });
+  const row = parseJsonObject(response.stdout, "gh api user");
+  const login = parseNullableString(row.login);
+  return login ? login.toLowerCase() : null;
+}
+
+async function listReviewBodiesByReviewId(execaFn: ExecaFn, repo: string, prNumber: number): Promise<Map<number, string[]>> {
+  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/pulls/${prNumber}/comments`, "gh pr review comments");
+  const bodiesByReviewId = new Map<number, string[]>();
+
+  for (const row of rows) {
+    const reviewId = parsePullRequestReviewId(row.pull_request_review_id);
+    if (!reviewId) continue;
+    const body = parseNullableString(row.body);
+    if (!body) continue;
+    const existing = bodiesByReviewId.get(reviewId);
+    if (existing) {
+      existing.push(body);
+    } else {
+      bodiesByReviewId.set(reviewId, [body]);
+    }
+  }
+
+  return bodiesByReviewId;
+}
+
+export async function cleanupPendingReviewDrafts(params: {
+  execaFn: ExecaFn;
+  repo: string;
+  prNumber: number;
+  dryRun: boolean;
+}): Promise<PendingReviewDraftCleanupResult> {
+  const { execaFn, repo, prNumber, dryRun } = params;
+  if (prNumber <= 0) {
+    return {
+      actorLogin: null,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  const actorLogin = await resolveAuthenticatedUserLogin(execaFn);
+  if (!actorLogin) {
+    return {
+      actorLogin: null,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/pulls/${prNumber}/reviews`, "gh pr reviews");
+  const pendingOwnReviews = rows.filter((row) => isPendingReview(row) && parseReviewAuthorLogin(row) === actorLogin);
+  const pendingFound = pendingOwnReviews.length;
+  if (!pendingFound) {
+    return {
+      actorLogin,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  let reviewBodiesByReviewId: Map<number, string[]>;
+  try {
+    reviewBodiesByReviewId = await listReviewBodiesByReviewId(execaFn, repo, prNumber);
+  } catch {
+    return {
+      actorLogin,
+      pendingFound,
+      deleted: 0,
+      skipped: pendingFound,
+    };
+  }
+
+  const cleanupCandidates = pendingOwnReviews.filter((review) => {
+    const reviewBody = parseNullableString(review.body);
+    if (isVibeManagedReviewText(reviewBody)) {
+      return true;
+    }
+    const reviewId = parseReviewId(review);
+    if (!reviewId) {
+      return false;
+    }
+    const commentBodies = reviewBodiesByReviewId.get(reviewId) ?? [];
+    return commentBodies.some((commentBody) => isVibeManagedReviewText(commentBody));
+  });
+
+  const nonVibePendingCount = pendingFound - cleanupCandidates.length;
+
+  if (dryRun) {
+    return {
+      actorLogin,
+      pendingFound,
+      deleted: 0,
+      skipped: pendingFound,
+    };
+  }
+
+  let deleted = 0;
+  let skipped = nonVibePendingCount;
+  for (const review of cleanupCandidates) {
+    const reviewId = parseReviewId(review);
+    if (!reviewId) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await runGhWithRetry(execaFn, ["api", "--method", "DELETE", `repos/${repo}/pulls/${prNumber}/reviews/${reviewId}`], {
+        stdio: "pipe",
+      });
+      deleted += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+
+  return {
+    actorLogin,
+    pendingFound,
+    deleted,
+    skipped,
+  };
+}
 
 export async function publishReviewToPullRequest(params: PublishReviewParams): Promise<ReviewPublishResult> {
   const { execaFn, repo, pr, summaryBody, findings, dryRun } = params;
