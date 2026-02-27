@@ -1635,18 +1635,8 @@ describe.sequential("cli review", () => {
         expect(existsSync(postflightPath)).toBe(true);
         const postflight = readFileSync(postflightPath, "utf8");
         expect(postflight).toContain("Termination: completed");
-        expect(postflight).toContain("### Phase Timings (ms)");
-        const parsed = JSON.parse(postflight) as {
-          review_metrics?: {
-            phase_timings_ms?: Record<string, { status?: string; elapsed_ms?: number }>;
-          };
-        };
-        const phaseTimings = parsed.review_metrics?.phase_timings_ms;
-        expect(phaseTimings).toBeDefined();
-        expect(phaseTimings?.agent_invocation?.status).toBe("completed");
-        expect(typeof phaseTimings?.agent_invocation?.elapsed_ms).toBe("number");
-        expect(phaseTimings?.lifecycle_finding_totals?.status).toBe("completed");
-        expect(phaseTimings?.publish_review_artifacts?.status).toBe("skipped");
+        expect(postflight).toContain("### Phase Timings");
+        expect(postflight).not.toContain("```json");
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "commit") {
@@ -1665,6 +1655,7 @@ describe.sequential("cli review", () => {
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "POST" && args[3] === "repos/acme/demo/issues/99/comments") {
         expect(args.join(" ")).toContain(`vibe:review-head:${finalHead}`);
+        expect(args.join(" ")).not.toContain("```json");
         return { stdout: JSON.stringify({ id: 9001 }) };
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
@@ -1705,6 +1696,14 @@ describe.sequential("cli review", () => {
     expect(addIndex).toBeGreaterThan(-1);
     expect(commitIndex).toBeGreaterThan(addIndex);
     expect(pushIndex).toBeGreaterThan(commitIndex);
+    const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
+    const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
+      review_metrics?: {
+        phase_timings_ms?: Record<string, { status?: string; elapsed_ms?: number }>;
+      };
+    };
+    expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
+    expect(typeof parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.elapsed_ms).toBe("number");
   });
 
   it("keeps review successful when thread auto-resolve has partial failures", async () => {

@@ -26,9 +26,11 @@ import {
 import {
   appendReviewSummaryToPostflight,
   createDefaultReviewPhaseTimings,
+  REVIEW_PHASE_TIMING_KEYS,
   type ReviewPhaseTimingKey,
   type ReviewPhaseTimingStatus,
   type ReviewPhaseTimings,
+  upsertReviewPhaseTimingsInPostflight,
 } from "./review-postflight";
 import {
   resolveReviewThreads,
@@ -136,8 +138,23 @@ type ReviewPolicySummary = {
   agentInvocationRetryBudget: number;
 };
 
+const PHASE_TIMING_ERROR_MAX_LENGTH = 240;
+
 function toElapsedMilliseconds(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
+}
+
+function sanitizePhaseTimingError(raw: string | null): string | null {
+  if (!raw) return null;
+  let value = raw.replace(/\s+/g, " ").trim();
+  if (!value) return null;
+  value = value.replace(/\bhttps?:\/\/\S+/gi, "[redacted-url]");
+  value = value.replace(/\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted-token]");
+  value = value.replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "Bearer [redacted-token]");
+  if (value.length > PHASE_TIMING_ERROR_MAX_LENGTH) {
+    value = `${value.slice(0, PHASE_TIMING_ERROR_MAX_LENGTH - 3)}...`;
+  }
+  return value;
 }
 
 function markPhaseTiming(
@@ -153,7 +170,7 @@ function markPhaseTiming(
 
   if (status === "failed") {
     target.status = "failed";
-    target.error = error ?? target.error;
+    target.error = sanitizePhaseTimingError(error ?? target.error);
     return;
   }
 
@@ -682,7 +699,9 @@ function buildOutcomeSummaryMarkdown(params: {
       lines.push(`- ${warning}`);
     }
   }
-  lines.push("", "### Phase Timings (ms)", "```json", JSON.stringify(params.phaseTimings, null, 2), "```");
+  lines.push("", "### Phase Timings");
+  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms`.");
+  lines.push(`- Phases: ${REVIEW_PHASE_TIMING_KEYS.join(", ")}`);
 
   if (!lifecycleSummary) {
     lines.push("", "### Pass Results");
@@ -1237,7 +1256,6 @@ export async function runReviewCommand(
       summary: summaryForArtifacts,
       issueId: context.issueId,
       branch: context.branch,
-      phaseTimings,
     });
   }
 
@@ -1327,6 +1345,15 @@ export async function runReviewCommand(
   }
 
   finalizePendingDraftCleanupTiming(phaseTimings);
+
+  if (!options.dryRun) {
+    emitProgress(onProgress, "updating postflight phase timings");
+    await upsertReviewPhaseTimingsInPostflight({
+      issueId: context.issueId,
+      branch: context.branch,
+      phaseTimings,
+    });
+  }
 
   const summary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
