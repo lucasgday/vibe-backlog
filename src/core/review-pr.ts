@@ -23,6 +23,7 @@ const REVIEW_FOLLOWUP_SOURCE_MARKER_PREFIX = "<!-- vibe:review-followup:source-i
 const REVIEW_FOLLOWUP_SOURCE_MARKER_REGEX = /<!-- vibe:review-followup:source-issue:(\d+) -->/i;
 const REVIEW_FINGERPRINT_MARKER_PREFIX = "<!-- vibe:fingerprint:";
 const REVIEW_FINGERPRINT_MARKER_REGEX = /<!-- vibe:fingerprint:([a-f0-9]+) -->/g;
+const REVIEW_THREADS_RESOLVE_MARKER = "Resolved via `vibe review threads resolve`.";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -656,11 +657,48 @@ function isPendingReview(review: JsonRecord): boolean {
   return state?.toUpperCase() === "PENDING";
 }
 
+function parseReviewId(review: JsonRecord): number | null {
+  return parsePositiveInt(review.id);
+}
+
+function parsePullRequestReviewId(value: unknown): number | null {
+  return parsePositiveInt(value);
+}
+
+function isVibeManagedReviewText(body: string | null): boolean {
+  if (!body) return false;
+  return (
+    body.includes(REVIEW_FINGERPRINT_MARKER_PREFIX) ||
+    body.includes(REVIEW_THREADS_RESOLVE_MARKER) ||
+    body.includes("vibe review threads resolve")
+  );
+}
+
 async function resolveAuthenticatedUserLogin(execaFn: ExecaFn): Promise<string | null> {
   const response = await runGhWithRetry(execaFn, ["api", "user"], { stdio: "pipe" });
   const row = parseJsonObject(response.stdout, "gh api user");
   const login = parseNullableString(row.login);
   return login ? login.toLowerCase() : null;
+}
+
+async function listReviewBodiesByReviewId(execaFn: ExecaFn, repo: string, prNumber: number): Promise<Map<number, string[]>> {
+  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/pulls/${prNumber}/comments`, "gh pr review comments");
+  const bodiesByReviewId = new Map<number, string[]>();
+
+  for (const row of rows) {
+    const reviewId = parsePullRequestReviewId(row.pull_request_review_id);
+    if (!reviewId) continue;
+    const body = parseNullableString(row.body);
+    if (!body) continue;
+    const existing = bodiesByReviewId.get(reviewId);
+    if (existing) {
+      existing.push(body);
+    } else {
+      bodiesByReviewId.set(reviewId, [body]);
+    }
+  }
+
+  return bodiesByReviewId;
 }
 
 export async function cleanupPendingReviewDrafts(params: {
@@ -691,8 +729,8 @@ export async function cleanupPendingReviewDrafts(params: {
 
   const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/pulls/${prNumber}/reviews`, "gh pr reviews");
   const pendingOwnReviews = rows.filter((row) => isPendingReview(row) && parseReviewAuthorLogin(row) === actorLogin);
-
-  if (!pendingOwnReviews.length) {
+  const pendingFound = pendingOwnReviews.length;
+  if (!pendingFound) {
     return {
       actorLogin,
       pendingFound: 0,
@@ -701,19 +739,46 @@ export async function cleanupPendingReviewDrafts(params: {
     };
   }
 
+  let reviewBodiesByReviewId: Map<number, string[]>;
+  try {
+    reviewBodiesByReviewId = await listReviewBodiesByReviewId(execaFn, repo, prNumber);
+  } catch {
+    return {
+      actorLogin,
+      pendingFound,
+      deleted: 0,
+      skipped: pendingFound,
+    };
+  }
+
+  const cleanupCandidates = pendingOwnReviews.filter((review) => {
+    const reviewBody = parseNullableString(review.body);
+    if (isVibeManagedReviewText(reviewBody)) {
+      return true;
+    }
+    const reviewId = parseReviewId(review);
+    if (!reviewId) {
+      return false;
+    }
+    const commentBodies = reviewBodiesByReviewId.get(reviewId) ?? [];
+    return commentBodies.some((commentBody) => isVibeManagedReviewText(commentBody));
+  });
+
+  const nonVibePendingCount = pendingFound - cleanupCandidates.length;
+
   if (dryRun) {
     return {
       actorLogin,
-      pendingFound: pendingOwnReviews.length,
+      pendingFound,
       deleted: 0,
-      skipped: pendingOwnReviews.length,
+      skipped: pendingFound,
     };
   }
 
   let deleted = 0;
-  let skipped = 0;
-  for (const review of pendingOwnReviews) {
-    const reviewId = parsePositiveInt(review.id);
+  let skipped = nonVibePendingCount;
+  for (const review of cleanupCandidates) {
+    const reviewId = parseReviewId(review);
     if (!reviewId) {
       skipped += 1;
       continue;
@@ -730,7 +795,7 @@ export async function cleanupPendingReviewDrafts(params: {
 
   return {
     actorLogin,
-    pendingFound: pendingOwnReviews.length,
+    pendingFound,
     deleted,
     skipped,
   };

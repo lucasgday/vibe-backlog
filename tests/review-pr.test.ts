@@ -713,12 +713,15 @@ describe("review PR helpers", () => {
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/reviews?per_page=100&page=1") {
         return {
           stdout: JSON.stringify([
-            { id: 11, state: "PENDING", user: { login: "alice" } },
-            { id: 12, state: "PENDING", user: { login: "bob" } },
+            { id: 11, state: "PENDING", user: { login: "alice" }, body: "Resolved via `vibe review threads resolve`." },
+            { id: 12, state: "PENDING", user: { login: "bob" }, body: "Resolved via `vibe review threads resolve`." },
             { id: 13, state: "APPROVED", user: { login: "alice" } },
-            { id: null, state: "PENDING", user: { login: "alice" } },
+            { id: 14, state: "PENDING", user: { login: "alice" }, body: "WIP manual draft for teammate follow-up" },
           ]),
         };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
       }
       if (
         cmd === "gh" &&
@@ -754,6 +757,17 @@ describe("review PR helpers", () => {
           args[3] === "repos/acme/demo/pulls/99/reviews/12",
       ),
     ).toBe(false);
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          Array.isArray(args) &&
+          args[0] === "api" &&
+          args[1] === "--method" &&
+          args[2] === "DELETE" &&
+          args[3] === "repos/acme/demo/pulls/99/reviews/14",
+      ),
+    ).toBe(false);
   });
 
   it("reports pending draft cleanup in dry-run without deleting reviews", async () => {
@@ -763,8 +777,11 @@ describe("review PR helpers", () => {
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/reviews?per_page=100&page=1") {
         return {
-          stdout: JSON.stringify([{ id: 21, state: "PENDING", user: { login: "alice" } }]),
+          stdout: JSON.stringify([{ id: 21, state: "PENDING", user: { login: "alice" }, body: "Resolved via `vibe review threads resolve`." }]),
         };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
+        return { stdout: "[]" };
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "DELETE") {
         throw new Error("dry-run should not delete pending reviews");
@@ -777,6 +794,38 @@ describe("review PR helpers", () => {
       repo: "acme/demo",
       prNumber: 99,
       dryRun: true,
+    });
+
+    expect(result.actorLogin).toBe("alice");
+    expect(result.pendingFound).toBe(1);
+    expect(result.deleted).toBe(0);
+    expect(result.skipped).toBe(1);
+  });
+
+  it("skips deletion when pending-draft ownership cannot be determined safely", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "api" && args[1] === "user") {
+        return { stdout: JSON.stringify({ login: "alice" }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/reviews?per_page=100&page=1") {
+        return {
+          stdout: JSON.stringify([{ id: 31, state: "PENDING", user: { login: "alice" }, body: "Resolved via `vibe review threads resolve`." }]),
+        };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
+        throw new Error("temporary github outage");
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "DELETE") {
+        throw new Error("should not delete when ownership checks fail");
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await cleanupPendingReviewDrafts({
+      execaFn: execaMock as never,
+      repo: "acme/demo",
+      prNumber: 99,
+      dryRun: false,
     });
 
     expect(result.actorLogin).toBe("alice");
