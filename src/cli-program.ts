@@ -1496,6 +1496,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             followupLabel: null,
             computeClass: "L2-standard",
             flowKind: "pr-open-gate",
+            onProgress: (message) => console.log(`pr open: review progress: ${message}`),
           },
           execaFn,
         );
@@ -1953,6 +1954,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             followupLabel: followupLabelRaw ? (followupLabelRaw as "bug" | "enhancement") : null,
             computeClass,
             flowKind: "review",
+            onProgress: (message) => console.log(`review: progress: ${message}`),
           },
           execaFn,
         );

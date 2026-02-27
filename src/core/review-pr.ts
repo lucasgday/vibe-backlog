@@ -48,6 +48,13 @@ export type ReviewPublishResult = {
   inlineSkipped: number;
 };
 
+export type PendingReviewDraftCleanupResult = {
+  actorLogin: string | null;
+  pendingFound: number;
+  deleted: number;
+  skipped: number;
+};
+
 export type FollowUpIssue = {
   number: number | null;
   url: string | null;
@@ -636,6 +643,98 @@ type PublishReviewParams = {
   findings: ReviewFinding[];
   dryRun: boolean;
 };
+
+function parseReviewAuthorLogin(review: JsonRecord): string | null {
+  const user = typeof review.user === "object" && review.user !== null ? (review.user as JsonRecord) : null;
+  if (!user) return null;
+  const login = parseNullableString(user.login);
+  return login ? login.toLowerCase() : null;
+}
+
+function isPendingReview(review: JsonRecord): boolean {
+  const state = parseNullableString(review.state);
+  return state?.toUpperCase() === "PENDING";
+}
+
+async function resolveAuthenticatedUserLogin(execaFn: ExecaFn): Promise<string | null> {
+  const response = await runGhWithRetry(execaFn, ["api", "user"], { stdio: "pipe" });
+  const row = parseJsonObject(response.stdout, "gh api user");
+  const login = parseNullableString(row.login);
+  return login ? login.toLowerCase() : null;
+}
+
+export async function cleanupPendingReviewDrafts(params: {
+  execaFn: ExecaFn;
+  repo: string;
+  prNumber: number;
+  dryRun: boolean;
+}): Promise<PendingReviewDraftCleanupResult> {
+  const { execaFn, repo, prNumber, dryRun } = params;
+  if (prNumber <= 0) {
+    return {
+      actorLogin: null,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  const actorLogin = await resolveAuthenticatedUserLogin(execaFn);
+  if (!actorLogin) {
+    return {
+      actorLogin: null,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  const rows = await listPaginatedGhApiRecords(execaFn, `repos/${repo}/pulls/${prNumber}/reviews`, "gh pr reviews");
+  const pendingOwnReviews = rows.filter((row) => isPendingReview(row) && parseReviewAuthorLogin(row) === actorLogin);
+
+  if (!pendingOwnReviews.length) {
+    return {
+      actorLogin,
+      pendingFound: 0,
+      deleted: 0,
+      skipped: 0,
+    };
+  }
+
+  if (dryRun) {
+    return {
+      actorLogin,
+      pendingFound: pendingOwnReviews.length,
+      deleted: 0,
+      skipped: pendingOwnReviews.length,
+    };
+  }
+
+  let deleted = 0;
+  let skipped = 0;
+  for (const review of pendingOwnReviews) {
+    const reviewId = parsePositiveInt(review.id);
+    if (!reviewId) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await runGhWithRetry(execaFn, ["api", "--method", "DELETE", `repos/${repo}/pulls/${prNumber}/reviews/${reviewId}`], {
+        stdio: "pipe",
+      });
+      deleted += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+
+  return {
+    actorLogin,
+    pendingFound: pendingOwnReviews.length,
+    deleted,
+    skipped,
+  };
+}
 
 export async function publishReviewToPullRequest(params: PublishReviewParams): Promise<ReviewPublishResult> {
   const { execaFn, repo, pr, summaryBody, findings, dryRun } = params;
