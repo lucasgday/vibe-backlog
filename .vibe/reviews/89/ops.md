@@ -102,3 +102,15 @@ Found 1 operational observability risk for release metrics.
 
 ### Findings
 - [P2] Postflight consumers receive incomplete phase timings for publish-related phases (src/core/review.ts:1234)
+
+## Run 2026-02-27T22:12:13.208Z
+- run_id: issue-89-review-pass-1
+- attempt: 1/1
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 release/workflow integrity issue tied to artifact persistence ordering.
+
+### Findings
+- [P1] Artifact-integrity guard runs before the last postflight mutation (src/core/review.ts:1267)

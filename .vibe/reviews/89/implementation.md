@@ -27,3 +27,15 @@ Found 1 functional defect in phase-timing persistence ordering.
 
 ### Findings
 - [P1] Persisted phase timings are snapshotted before publish/cleanup completes (src/core/review.ts:1209)
+
+## Run 2026-02-27T22:12:13.206Z
+- run_id: issue-89-review-pass-1
+- attempt: 1/1
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 behavioral regression in phase-timing persistence ordering for autopush flows.
+
+### Findings
+- [P1] Autopush executes before final phase timings are persisted (src/core/review.ts:1263)

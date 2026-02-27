@@ -114,3 +114,15 @@ Found 1 test coverage gap around finalized publish timings.
 
 ### Findings
 - [P2] Tests lock in pre-publish snapshot but miss finalized publish timing path (tests/cli-review.test.ts:1649)
+
+## Run 2026-02-27T22:12:13.207Z
+- run_id: issue-89-review-pass-1
+- attempt: 1/1
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 test coverage gap that allows the autopush ordering regression to pass.
+
+### Findings
+- [P2] Success-path test does not assert clean tree after final timing persistence (tests/cli-review.test.ts:1606)
