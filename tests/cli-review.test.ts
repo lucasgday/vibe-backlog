@@ -1617,17 +1617,24 @@ describe.sequential("cli review", () => {
 
     const executed: string[] = [];
     let statusCalls = 0;
-    const finalHead = "feedface1234567890";
+    const firstHead = "feedface111111111111111111111111111111111111";
+    const finalHead = "feedface222222222222222222222222222222222222";
+    let currentHead = "abc123def000000000000000000000000000000000";
+    let commitCalls = 0;
+    let summaryCommentBody: string | null = null;
+    const publishedSummaryBodies: string[] = [];
 
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
       executed.push([cmd, ...args].join(" "));
 
       if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "codex/issue-34-vibe-review\n" };
-      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: `${finalHead}\n` };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: `${currentHead}\n` };
       if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") {
         statusCalls += 1;
         if (statusCalls === 1) return { stdout: "" };
         if (statusCalls === 2) return { stdout: " M .vibe/artifacts/postflight.json\n M .vibe/reviews/34/implementation.md\n" };
+        if (statusCalls === 4) return { stdout: " M .vibe/artifacts/postflight.json\n" };
+        if (statusCalls === 5) return { stdout: " M .vibe/artifacts/postflight.json\n" };
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "add" && args[1] === "-A") {
@@ -1640,6 +1647,8 @@ describe.sequential("cli review", () => {
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "commit") {
+        commitCalls += 1;
+        currentHead = commitCalls === 1 ? firstHead : finalHead;
         return { stdout: "[codex/issue-34-vibe-review abc1234] review\n", stderr: "", exitCode: 0 };
       }
       if (cmd === "git" && args[0] === "push") return { stdout: "" };
@@ -1651,11 +1660,25 @@ describe.sequential("cli review", () => {
       if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-persist", findingsCount: 0 }) };
       if (cmd === "gh" && args[0] === "pr" && args[1] === "review") return { stdout: "" };
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") {
-        return { stdout: "[]" };
+        if (!summaryCommentBody) {
+          return { stdout: "[]" };
+        }
+        return { stdout: JSON.stringify([{ id: 9001, body: summaryCommentBody, user: { login: "review-bot" } }]) };
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "POST" && args[3] === "repos/acme/demo/issues/99/comments") {
-        expect(args.join(" ")).toContain(`vibe:review-head:${finalHead}`);
-        expect(args.join(" ")).not.toContain("```json");
+        const bodyArg = args.find((entry) => String(entry).startsWith("body="));
+        const body = String(bodyArg ?? "");
+        summaryCommentBody = body;
+        publishedSummaryBodies.push(body);
+        expect(body).not.toContain("```json");
+        return { stdout: JSON.stringify({ id: 9001 }) };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "PATCH" && args[3] === "repos/acme/demo/issues/comments/9001") {
+        const bodyArg = args.find((entry) => String(entry).startsWith("body="));
+        const body = String(bodyArg ?? "");
+        summaryCommentBody = body;
+        publishedSummaryBodies.push(body);
+        expect(body).not.toContain("```json");
         return { stdout: JSON.stringify({ id: 9001 }) };
       }
       if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") {
@@ -1680,7 +1703,7 @@ describe.sequential("cli review", () => {
           };
         }
       }
-      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: finalHead }) };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "view") return { stdout: JSON.stringify({ headRefOid: currentHead }) };
       return { stdout: "" };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1693,9 +1716,13 @@ describe.sequential("cli review", () => {
     const addIndex = executed.findIndex((entry) => entry.startsWith("git add -A"));
     const commitIndex = executed.findIndex((entry) => entry.startsWith("git commit -m"));
     const pushIndex = executed.findIndex((entry) => entry.startsWith("git push"));
+    const commitCount = executed.filter((entry) => entry.startsWith("git commit -m")).length;
+    const pushCount = executed.filter((entry) => entry.startsWith("git push")).length;
     expect(addIndex).toBeGreaterThan(-1);
     expect(commitIndex).toBeGreaterThan(addIndex);
     expect(pushIndex).toBeGreaterThan(commitIndex);
+    expect(commitCount).toBe(2);
+    expect(pushCount).toBe(2);
     const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
     const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
       review_metrics?: {
@@ -1704,6 +1731,8 @@ describe.sequential("cli review", () => {
     };
     expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
     expect(typeof parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.elapsed_ms).toBe("number");
+    expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${firstHead}`))).toBe(true);
+    expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${finalHead}`))).toBe(true);
   });
 
   it("keeps review successful when thread auto-resolve has partial failures", async () => {

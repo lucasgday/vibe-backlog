@@ -1355,6 +1355,46 @@ export async function runReviewCommand(
     });
   }
 
+  if (!options.dryRun && options.autopush) {
+    const trackedChangesAfterFinalTimingPersistence = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesAfterFinalTimingPersistence) {
+      const finalizedPersistenceCommitted = await runWithProgressHeartbeat(
+        onProgress,
+        "git commit/push finalized review artifacts",
+        () => commitAndPushChanges(execaFn, finalOutput.run_id),
+      );
+      committed = committed || finalizedPersistenceCommitted;
+
+      const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+      if (trackedChangesRemain) {
+        throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
+      }
+
+      if (finalizedPersistenceCommitted && options.publish) {
+        let refreshedHeadSha: string | null = null;
+        try {
+          refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
+        } catch {
+          refreshedHeadSha = null;
+        }
+
+        await runWithProgressHeartbeat(
+          onProgress,
+          `refresh review summary for final HEAD on PR #${pr.number}`,
+          () =>
+            publishReviewToPullRequest({
+              execaFn,
+              repo,
+              pr,
+              summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
+              findings: [],
+              dryRun: options.dryRun,
+            }),
+        );
+      }
+    }
+  }
+
   const summary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
     issueTitle: issue.title,
