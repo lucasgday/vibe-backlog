@@ -202,6 +202,25 @@ function printPrReadyReport(result: PrReadyResult): void {
   }
 }
 
+type PhaseTimingLogEntry = {
+  elapsed_ms: number;
+  status: string;
+  runs: number;
+  error: string | null;
+};
+
+function printPhaseTimings(prefix: string, timings: Record<string, PhaseTimingLogEntry>): void {
+  console.log(`${prefix} phase_timings_ms:`);
+  const keys = Object.keys(timings).sort();
+  for (const key of keys) {
+    const entry = timings[key];
+    const errorText = entry.error ? ` error=${entry.error}` : "";
+    console.log(
+      `${prefix} phase=${key} status=${entry.status} ms=${entry.elapsed_ms} runs=${entry.runs}${errorText}`,
+    );
+  }
+}
+
 function collectRepeatedOption(value: string, previous: string[]): string[] {
   const normalized = String(value).trim();
   if (!normalized) return previous;
@@ -1504,6 +1523,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         console.log(
           `pr open: review policy class=${reviewResult.computeClass} pass_profile=${reviewResult.passProfile} agent_retry_budget=${reviewResult.agentInvocationRetryBudget}`,
         );
+        printPhaseTimings("pr open: review", reviewResult.phaseTimings);
         if (reviewResult.rationaleAutofilled) {
           console.log("pr open: rationale sections autofilled in existing PR body.");
         }
@@ -1981,6 +2001,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (result.findingTotalsWarning) {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
         }
+        printPhaseTimings("review:", result.phaseTimings);
         if (result.rationaleAutofilled) {
           console.log("review: rationale sections autofilled in existing PR body.");
         }

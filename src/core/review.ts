@@ -23,7 +23,15 @@ import {
   resolveRepoNameWithOwner,
   type FollowUpIssue,
 } from "./review-pr";
-import { appendReviewSummaryToPostflight } from "./review-postflight";
+import {
+  appendReviewSummaryToPostflight,
+  createDefaultReviewPhaseTimings,
+  REVIEW_PHASE_TIMING_KEYS,
+  type ReviewPhaseTimingKey,
+  type ReviewPhaseTimingStatus,
+  type ReviewPhaseTimings,
+  upsertReviewPhaseTimingsInPostflight,
+} from "./review-postflight";
 import {
   resolveReviewThreads,
   summarizeReviewThreadLifecycleTotals,
@@ -97,6 +105,7 @@ export type ReviewCommandResult = {
   passProfile: ReviewPassProfile;
   skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
   agentInvocationRetryBudget: number;
+  phaseTimings: ReviewPhaseTimings;
 };
 
 type ReviewRunContext = {
@@ -128,6 +137,72 @@ type ReviewPolicySummary = {
   skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
   agentInvocationRetryBudget: number;
 };
+
+const PHASE_TIMING_ERROR_MAX_LENGTH = 240;
+
+function toElapsedMilliseconds(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
+function sanitizePhaseTimingError(raw: string | null): string | null {
+  if (!raw) return null;
+  let value = raw.replace(/\s+/g, " ").trim();
+  if (!value) return null;
+  value = value.replace(/\bhttps?:\/\/\S+/gi, "[redacted-url]");
+  value = value.replace(/\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted-token]");
+  value = value.replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "Bearer [redacted-token]");
+  if (value.length > PHASE_TIMING_ERROR_MAX_LENGTH) {
+    value = `${value.slice(0, PHASE_TIMING_ERROR_MAX_LENGTH - 3)}...`;
+  }
+  return value;
+}
+
+function markPhaseTiming(
+  timings: ReviewPhaseTimings,
+  key: ReviewPhaseTimingKey,
+  elapsedMs: number,
+  status: ReviewPhaseTimingStatus,
+  error: string | null = null,
+): void {
+  const target = timings[key];
+  target.elapsed_ms += Math.max(0, Math.trunc(elapsedMs));
+  target.runs += 1;
+
+  if (status === "failed") {
+    target.status = "failed";
+    target.error = sanitizePhaseTimingError(error ?? target.error);
+    return;
+  }
+
+  if (target.status !== "failed") {
+    target.status = "completed";
+  }
+}
+
+function finalizePendingDraftCleanupTiming(timings: ReviewPhaseTimings): void {
+  const pre = timings.pending_draft_cleanup_pre_thread_resolve;
+  const post = timings.pending_draft_cleanup_post_publish;
+  const total = timings.pending_draft_cleanup_total;
+
+  total.elapsed_ms = pre.elapsed_ms + post.elapsed_ms;
+  total.runs = pre.runs + post.runs;
+
+  if (total.runs === 0) {
+    total.status = "skipped";
+    total.error = null;
+    return;
+  }
+
+  if (pre.status === "failed" || post.status === "failed") {
+    total.status = "failed";
+    const errors = [pre.error, post.error].filter((value): value is string => Boolean(value));
+    total.error = errors.length ? errors.join(" | ") : null;
+    return;
+  }
+
+  total.status = "completed";
+  total.error = null;
+}
 
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
   if (value === undefined || value === null || value === "") return null;
@@ -570,6 +645,7 @@ function buildOutcomeSummaryMarkdown(params: {
   findingTotals: ReviewFindingTotals;
   severityTotals: SeverityCounts;
   reviewPolicy: ReviewPolicySummary;
+  phaseTimings: ReviewPhaseTimings;
 }): string {
   const lifecycleSummary = params.findingTotals.source === "lifecycle";
   const passStats = lifecycleSummary ? [] : buildPassFindingStats(params.output.passes, params.allFindings, params.unresolvedFindings);
@@ -623,6 +699,9 @@ function buildOutcomeSummaryMarkdown(params: {
       lines.push(`- ${warning}`);
     }
   }
+  lines.push("", "### Phase Timings");
+  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms`.");
+  lines.push(`- Phases: ${REVIEW_PHASE_TIMING_KEYS.join(", ")}`);
 
   if (!lifecycleSummary) {
     lines.push("", "### Pass Results");
@@ -795,51 +874,66 @@ export async function runReviewCommand(
   let terminationReason: ReviewTerminationReason = "max-attempts";
   let previousFingerprintKey: string | null = null;
   const allFindingsByFingerprint = new Map<string, ReviewFinding>();
+  const phaseTimings = createDefaultReviewPhaseTimings();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attemptsUsed = attempt;
     emitProgress(onProgress, `attempt ${attempt}/${maxAttempts}: invoking review agent`);
 
-    const run = await runWithProgressHeartbeat(
-      onProgress,
-      `attempt ${attempt}/${maxAttempts}: review agent`,
-      () =>
-        runReviewAgent({
-          execaFn,
-          plan: executionPlan,
-          invocationRetry: {
-            maxInvocations: executionPolicy.agentInvocationRetryBudget,
-          },
-          input: {
-            version: 1,
-            workspace_root: process.cwd(),
-            repo,
-            issue: {
-              id: context.issueId,
-              title: issue.title,
-              url: issue.url,
+    const agentPhaseStartedAt = Date.now();
+    let run: Awaited<ReturnType<typeof runReviewAgent>>;
+    try {
+      run = await runWithProgressHeartbeat(
+        onProgress,
+        `attempt ${attempt}/${maxAttempts}: review agent`,
+        () =>
+          runReviewAgent({
+            execaFn,
+            plan: executionPlan,
+            invocationRetry: {
+              maxInvocations: executionPolicy.agentInvocationRetryBudget,
             },
-            branch: context.branch,
-            base_branch: context.baseBranch,
-            pr: {
-              number: pr.number,
-              url: pr.url,
+            input: {
+              version: 1,
+              workspace_root: process.cwd(),
+              repo,
+              issue: {
+                id: context.issueId,
+                title: issue.title,
+                url: issue.url,
+              },
+              branch: context.branch,
+              base_branch: context.baseBranch,
+              pr: {
+                number: pr.number,
+                url: pr.url,
+              },
+              attempt,
+              max_attempts: maxAttempts,
+              autofix: options.autofix,
+              passes: REVIEW_PASS_ORDER,
+              review_policy: {
+                compute_class: executionPolicy.computeClass,
+                pass_profile: executionPolicy.passProfile,
+                active_passes: executionPolicy.activePasses,
+                skipped_passes: executionPolicy.skippedPasses,
+                agent_invocation_retry_budget: executionPolicy.agentInvocationRetryBudget,
+              },
             },
-            attempt,
-            max_attempts: maxAttempts,
-            autofix: options.autofix,
-            passes: REVIEW_PASS_ORDER,
-            review_policy: {
-              compute_class: executionPolicy.computeClass,
-              pass_profile: executionPolicy.passProfile,
-              active_passes: executionPolicy.activePasses,
-              skipped_passes: executionPolicy.skippedPasses,
-              agent_invocation_retry_budget: executionPolicy.agentInvocationRetryBudget,
-            },
-          },
-        }),
-      20_000,
-    );
+          }),
+        20_000,
+      );
+      markPhaseTiming(phaseTimings, "agent_invocation", toElapsedMilliseconds(agentPhaseStartedAt), "completed");
+    } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "agent_invocation",
+        toElapsedMilliseconds(agentPhaseStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
+      throw error;
+    }
 
     const output = run.output;
     const findings = flattenReviewFindings(output);
@@ -943,6 +1037,7 @@ export async function runReviewCommand(
     findingTotals: currentRunFindingTotals,
     severityTotals: currentRunSeverityTotals,
     reviewPolicy: executionPolicy,
+    phaseTimings,
   });
 
   if (unresolvedFindings.length > 0 && terminationReason === "max-attempts") {
@@ -970,6 +1065,7 @@ export async function runReviewCommand(
   }
 
   if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    const preCleanupStartedAt = Date.now();
     try {
       const preCleanup = await runWithProgressHeartbeat(
         onProgress,
@@ -982,16 +1078,30 @@ export async function runReviewCommand(
             dryRun: false,
           }),
       );
+      markPhaseTiming(
+        phaseTimings,
+        "pending_draft_cleanup_pre_thread_resolve",
+        toElapsedMilliseconds(preCleanupStartedAt),
+        "completed",
+      );
       if (preCleanup.pendingFound > 0) {
         emitProgress(
           onProgress,
           `cleanup pending review drafts (pre-thread-resolve): found=${preCleanup.pendingFound} deleted=${preCleanup.deleted} skipped=${preCleanup.skipped}`,
         );
       }
-    } catch {
+    } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "pending_draft_cleanup_pre_thread_resolve",
+        toElapsedMilliseconds(preCleanupStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
       // Best-effort cleanup; ignore failures to keep review flow deterministic.
     }
 
+    const threadResolveStartedAt = Date.now();
     try {
       threadResolution = await runWithProgressHeartbeat(
         onProgress,
@@ -1009,11 +1119,19 @@ export async function runReviewCommand(
             execaFn,
           ),
       );
+      markPhaseTiming(phaseTimings, "thread_auto_resolve", toElapsedMilliseconds(threadResolveStartedAt), "completed");
 
       if (threadResolution.failed > 0) {
         threadResolutionWarning = `review: thread auto-resolve warning selected=${threadResolution.selectedThreads} resolved=${threadResolution.resolved} failed=${threadResolution.failed}.`;
       }
     } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "thread_auto_resolve",
+        toElapsedMilliseconds(threadResolveStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
       const message = error instanceof Error && error.message ? error.message : String(error);
       threadResolutionWarning = `review: thread auto-resolve warning ${message}`;
     }
@@ -1022,6 +1140,7 @@ export async function runReviewCommand(
   let severityTotals = currentRunSeverityTotals;
   let findingTotals = currentRunFindingTotals;
   if (!options.dryRun && pr.number > 0) {
+    const lifecycleTotalsStartedAt = Date.now();
     try {
       const lifecycleTotals = await runWithProgressHeartbeat(
         onProgress,
@@ -1087,12 +1206,192 @@ export async function runReviewCommand(
         }
       }
       severityTotals = mergedSeverityTotals;
+      markPhaseTiming(phaseTimings, "lifecycle_finding_totals", toElapsedMilliseconds(lifecycleTotalsStartedAt), "completed");
     } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "lifecycle_finding_totals",
+        toElapsedMilliseconds(lifecycleTotalsStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
       findingTotals = {
         ...currentRunFindingTotals,
         warning: `lifecycle unavailable (${formatErrorMessage(error)}); using current-run totals`,
       };
       severityTotals = currentRunSeverityTotals;
+    }
+  }
+
+  finalizePendingDraftCleanupTiming(phaseTimings);
+
+  const summaryForArtifacts = buildOutcomeSummaryMarkdown({
+    issueId: context.issueId,
+    issueTitle: issue.title,
+    prNumber: pr.number || null,
+    attemptsUsed,
+    maxAttempts,
+    output: finalOutput,
+    allFindings,
+    resolvedFindings,
+    unresolvedFindings,
+    followUp,
+    closedFollowUpIssueNumbers,
+    followUpCloseWarnings,
+    provider: providerRunner,
+    providerSource: executionPlan.source,
+    resumeAttempted,
+    resumeFallback,
+    providerHealedFromRuntime: executionPlan.mode === "provider" ? executionPlan.healedFromRuntime : null,
+    terminationReason,
+    findingTotals,
+    severityTotals,
+    reviewPolicy: executionPolicy,
+    phaseTimings,
+  });
+
+  if (!options.dryRun) {
+    emitProgress(onProgress, "appending review summary to postflight artifact");
+    await appendReviewSummaryToPostflight({
+      summary: summaryForArtifacts,
+      issueId: context.issueId,
+      branch: context.branch,
+    });
+  }
+
+  let committed = false;
+  if (!options.dryRun && options.autopush) {
+    committed = await runWithProgressHeartbeat(onProgress, "git commit/push autofix", () =>
+      commitAndPushChanges(execaFn, finalOutput.run_id),
+    );
+    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesRemain) {
+      throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
+    }
+  }
+
+  let summaryHeadSha: string | null = null;
+  try {
+    summaryHeadSha = await resolveCurrentHeadSha(execaFn);
+  } catch {
+    summaryHeadSha = null;
+  }
+
+  if (options.publish) {
+    const publishStartedAt = Date.now();
+    try {
+      await runWithProgressHeartbeat(
+        onProgress,
+        `publish review artifacts to PR #${pr.number}`,
+        () =>
+          publishReviewToPullRequest({
+            execaFn,
+            repo,
+            pr,
+            summaryBody: buildReviewSummaryBody(summaryForArtifacts, summaryHeadSha, { policyKey: reviewPolicyKey }),
+            findings: unresolvedFindings,
+            dryRun: options.dryRun,
+          }),
+      );
+      markPhaseTiming(phaseTimings, "publish_review_artifacts", toElapsedMilliseconds(publishStartedAt), "completed");
+    } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "publish_review_artifacts",
+        toElapsedMilliseconds(publishStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
+      throw error;
+    }
+  }
+
+  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+    const postCleanupStartedAt = Date.now();
+    try {
+      const postCleanup = await runWithProgressHeartbeat(
+        onProgress,
+        "cleanup pending review drafts (post-publish)",
+        () =>
+          cleanupPendingReviewDrafts({
+            execaFn,
+            repo,
+            prNumber: pr.number,
+            dryRun: false,
+          }),
+      );
+      markPhaseTiming(
+        phaseTimings,
+        "pending_draft_cleanup_post_publish",
+        toElapsedMilliseconds(postCleanupStartedAt),
+        "completed",
+      );
+      if (postCleanup.pendingFound > 0) {
+        emitProgress(
+          onProgress,
+          `cleanup pending review drafts (post-publish): found=${postCleanup.pendingFound} deleted=${postCleanup.deleted} skipped=${postCleanup.skipped}`,
+        );
+      }
+    } catch (error) {
+      markPhaseTiming(
+        phaseTimings,
+        "pending_draft_cleanup_post_publish",
+        toElapsedMilliseconds(postCleanupStartedAt),
+        "failed",
+        formatErrorMessage(error),
+      );
+      // Best-effort cleanup; ignore failures to keep review flow deterministic.
+    }
+  }
+
+  finalizePendingDraftCleanupTiming(phaseTimings);
+
+  if (!options.dryRun) {
+    emitProgress(onProgress, "updating postflight phase timings");
+    await upsertReviewPhaseTimingsInPostflight({
+      issueId: context.issueId,
+      branch: context.branch,
+      phaseTimings,
+    });
+  }
+
+  if (!options.dryRun && options.autopush) {
+    const trackedChangesAfterFinalTimingPersistence = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesAfterFinalTimingPersistence) {
+      const finalizedPersistenceCommitted = await runWithProgressHeartbeat(
+        onProgress,
+        "git commit/push finalized review artifacts",
+        () => commitAndPushChanges(execaFn, finalOutput.run_id),
+      );
+      committed = committed || finalizedPersistenceCommitted;
+
+      const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+      if (trackedChangesRemain) {
+        throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
+      }
+
+      if (finalizedPersistenceCommitted && options.publish) {
+        let refreshedHeadSha: string | null = null;
+        try {
+          refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
+        } catch {
+          refreshedHeadSha = null;
+        }
+
+        await runWithProgressHeartbeat(
+          onProgress,
+          `refresh review summary for final HEAD on PR #${pr.number}`,
+          () =>
+            publishReviewToPullRequest({
+              execaFn,
+              repo,
+              pr,
+              summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
+              findings: [],
+              dryRun: options.dryRun,
+            }),
+        );
+      }
     }
   }
 
@@ -1118,74 +1417,8 @@ export async function runReviewCommand(
     findingTotals,
     severityTotals,
     reviewPolicy: executionPolicy,
+    phaseTimings,
   });
-
-  if (!options.dryRun) {
-    emitProgress(onProgress, "appending review summary to postflight artifact");
-    await appendReviewSummaryToPostflight({
-      summary,
-      issueId: context.issueId,
-      branch: context.branch,
-    });
-  }
-
-  let committed = false;
-  if (!options.dryRun && options.autopush) {
-    committed = await runWithProgressHeartbeat(onProgress, "git commit/push autofix", () =>
-      commitAndPushChanges(execaFn, finalOutput.run_id),
-    );
-    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
-    if (trackedChangesRemain) {
-      throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
-    }
-  }
-
-  let summaryHeadSha: string | null = null;
-  try {
-    summaryHeadSha = await resolveCurrentHeadSha(execaFn);
-  } catch {
-    summaryHeadSha = null;
-  }
-
-  if (options.publish) {
-    await runWithProgressHeartbeat(
-      onProgress,
-      `publish review artifacts to PR #${pr.number}`,
-      () =>
-        publishReviewToPullRequest({
-          execaFn,
-          repo,
-          pr,
-          summaryBody: buildReviewSummaryBody(summary, summaryHeadSha, { policyKey: reviewPolicyKey }),
-          findings: unresolvedFindings,
-          dryRun: options.dryRun,
-        }),
-    );
-  }
-
-  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
-    try {
-      const postCleanup = await runWithProgressHeartbeat(
-        onProgress,
-        "cleanup pending review drafts (post-publish)",
-        () =>
-          cleanupPendingReviewDrafts({
-            execaFn,
-            repo,
-            prNumber: pr.number,
-            dryRun: false,
-          }),
-      );
-      if (postCleanup.pendingFound > 0) {
-        emitProgress(
-          onProgress,
-          `cleanup pending review drafts (post-publish): found=${postCleanup.pendingFound} deleted=${postCleanup.deleted} skipped=${postCleanup.skipped}`,
-        );
-      }
-    } catch {
-      // Best-effort cleanup; ignore failures to keep review flow deterministic.
-    }
-  }
 
   emitProgress(
     onProgress,
@@ -1221,5 +1454,6 @@ export async function runReviewCommand(
     passProfile: executionPolicy.passProfile,
     skippedPasses: executionPolicy.skippedPasses,
     agentInvocationRetryBudget: executionPolicy.agentInvocationRetryBudget,
+    phaseTimings,
   };
 }
