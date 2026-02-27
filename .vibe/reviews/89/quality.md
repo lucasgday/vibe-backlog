@@ -102,3 +102,15 @@ Coverage updates:
 
 Untested:
 - Live GitHub API timing behavior outside mocked test harness.
+
+## Run 2026-02-27T16:14:44.888Z
+- run_id: review-issue-89-attempt-1-20260227T1538Z
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 test coverage gap around finalized publish timings.
+
+### Findings
+- [P2] Tests lock in pre-publish snapshot but miss finalized publish timing path (tests/cli-review.test.ts:1649)

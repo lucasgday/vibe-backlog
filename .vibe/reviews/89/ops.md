@@ -90,3 +90,15 @@ Ops/release checks:
 - Commands succeeded locally: pnpm test, pnpm build.
 - No dependency additions; supply-chain posture unchanged.
 - Added outputs are backward-compatible additive fields.
+
+## Run 2026-02-27T16:14:44.889Z
+- run_id: review-issue-89-attempt-1-20260227T1538Z
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 operational observability risk for release metrics.
+
+### Findings
+- [P2] Postflight consumers receive incomplete phase timings for publish-related phases (src/core/review.ts:1234)

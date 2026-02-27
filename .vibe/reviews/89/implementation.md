@@ -15,3 +15,15 @@
   - src/cli-program.ts
   - tests/cli-review.test.ts
 - Result: structured phase timings are captured, summarized, and persisted in postflight metrics.
+
+## Run 2026-02-27T16:14:44.886Z
+- run_id: review-issue-89-attempt-1-20260227T1538Z
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 functional defect in phase-timing persistence ordering.
+
+### Findings
+- [P1] Persisted phase timings are snapshotted before publish/cleanup completes (src/core/review.ts:1209)

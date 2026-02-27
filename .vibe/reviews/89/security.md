@@ -17,3 +17,15 @@ Checks and mitigations:
 - No new external input parsing logic; command surface unchanged.
 - Error strings pass through existing message normalization (`formatErrorMessage`).
 - Metrics are additive and bounded to deterministic phase keys.
+
+## Run 2026-02-27T16:14:44.888Z
+- run_id: review-issue-89-attempt-1-20260227T1538Z
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 security-hardening gap in persisted error handling.
+
+### Findings
+- [P2] Raw phase error text is persisted without redaction (src/core/review.ts:149)
