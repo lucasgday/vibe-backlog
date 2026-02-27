@@ -1504,6 +1504,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         console.log(
           `pr open: review policy class=${reviewResult.computeClass} pass_profile=${reviewResult.passProfile} agent_retry_budget=${reviewResult.agentInvocationRetryBudget}`,
         );
+        console.log(`pr open: review phase_timings_ms=${JSON.stringify(reviewResult.phaseTimings)}`);
         if (reviewResult.rationaleAutofilled) {
           console.log("pr open: rationale sections autofilled in existing PR body.");
         }
@@ -1981,6 +1982,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (result.findingTotalsWarning) {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
         }
+        console.log(`review: phase_timings_ms=${JSON.stringify(result.phaseTimings)}`);
         if (result.rationaleAutofilled) {
           console.log("review: rationale sections autofilled in existing PR body.");
         }

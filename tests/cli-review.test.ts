@@ -1133,6 +1133,14 @@ describe.sequential("cli review", () => {
     expect(process.exitCode).toBeUndefined();
     expect(logs.some((line) => line.includes("review: findings_totals_source=current-run"))).toBe(true);
     expect(logs.some((line) => line.includes("review: findings_totals_warning=lifecycle unavailable"))).toBe(true);
+    const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
+    const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
+      review_metrics?: {
+        phase_timings_ms?: Record<string, { status?: string; error?: string | null }>;
+      };
+    };
+    expect(parsed.review_metrics?.phase_timings_ms?.lifecycle_finding_totals?.status).toBe("failed");
+    expect(parsed.review_metrics?.phase_timings_ms?.lifecycle_finding_totals?.error).toContain("simulated lifecycle failure");
   });
 
   it("auto-closes open follow-up issues when unresolved findings reach zero", async () => {
@@ -1627,6 +1635,18 @@ describe.sequential("cli review", () => {
         expect(existsSync(postflightPath)).toBe(true);
         const postflight = readFileSync(postflightPath, "utf8");
         expect(postflight).toContain("Termination: completed");
+        expect(postflight).toContain("### Phase Timings (ms)");
+        const parsed = JSON.parse(postflight) as {
+          review_metrics?: {
+            phase_timings_ms?: Record<string, { status?: string; elapsed_ms?: number }>;
+          };
+        };
+        const phaseTimings = parsed.review_metrics?.phase_timings_ms;
+        expect(phaseTimings).toBeDefined();
+        expect(phaseTimings?.agent_invocation?.status).toBe("completed");
+        expect(typeof phaseTimings?.agent_invocation?.elapsed_ms).toBe("number");
+        expect(phaseTimings?.lifecycle_finding_totals?.status).toBe("completed");
+        expect(phaseTimings?.publish_review_artifacts?.status).toBe("skipped");
         return { stdout: "" };
       }
       if (cmd === "git" && args[0] === "commit") {
