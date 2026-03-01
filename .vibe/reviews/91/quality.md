@@ -49,3 +49,16 @@ One low-severity test coverage gap remains for timing history retention bounds.
 
 ### Findings
 - [P3] Missing regression test for phase timing history retention cap (tests/cli-review.test.ts:1738)
+
+## Run 2026-03-01T22:51:58Z
+What I tested:
+- Added dedicated unit coverage for first-write null deltas and 20-entry history retention cap.
+- Re-ran full test suite and build after wiring delta logs into CLI output.
+
+Commands:
+- `pnpm test -- tests/review-postflight.test.ts tests/cli-review.test.ts`
+- `pnpm test`
+- `pnpm build`
+
+Untested:
+- None beyond previously documented live GitHub API variance.

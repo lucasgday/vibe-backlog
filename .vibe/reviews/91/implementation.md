@@ -47,3 +47,15 @@ No material implementation defects found in the updated publish/autopush orderin
 
 ### Findings
 - none
+
+## Run 2026-03-01T22:51:58Z
+- Scope: resolve remaining `issue-91-review-pass-2` low-severity findings.
+- Changes:
+  - Surfaced persisted timing deltas to operators in CLI output (`review:` and `pr open: review` logs).
+  - Added persisted delta loading in `runReviewCommand` result plumbing.
+  - Added dedicated postflight metric tests, including history retention cap (20 snapshots).
+- Files:
+  - src/core/review.ts
+  - src/cli-program.ts
+  - src/core/review-postflight.ts
+  - tests/review-postflight.test.ts

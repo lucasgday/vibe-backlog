@@ -32,3 +32,8 @@ Core growth instrumentation improved with timing deltas, with one follow-up oppo
 
 ### Findings
 - [P3] Timing delta signals are persisted but not surfaced to users/operators (src/core/review-postflight.ts:104)
+
+## Run 2026-03-01T22:51:58Z
+Growth/learning outcomes:
+- Timing delta signals are now operator-visible in CLI logs, reducing the gap between stored telemetry and actionable diagnosis.
+- Retention-cap tests protect trend continuity expectations from future regressions.

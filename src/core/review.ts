@@ -1,4 +1,4 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import {
@@ -28,6 +28,7 @@ import {
   createDefaultReviewPhaseTimings,
   REVIEW_PHASE_TIMING_KEYS,
   type ReviewPhaseTimingKey,
+  type ReviewPhaseTimingDeltas,
   type ReviewPhaseTimingStatus,
   type ReviewPhaseTimings,
   upsertReviewPhaseTimingsInPostflight,
@@ -106,6 +107,7 @@ export type ReviewCommandResult = {
   skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
   agentInvocationRetryBudget: number;
   phaseTimings: ReviewPhaseTimings;
+  phaseTimingDeltas: ReviewPhaseTimingDeltas | null;
 };
 
 type ReviewRunContext = {
@@ -202,6 +204,36 @@ function finalizePendingDraftCleanupTiming(timings: ReviewPhaseTimings): void {
 
   total.status = "completed";
   total.error = null;
+}
+
+async function readPersistedPhaseTimingDeltas(): Promise<ReviewPhaseTimingDeltas | null> {
+  try {
+    const filePath = path.resolve(process.cwd(), ".vibe", "artifacts", "postflight.json");
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const root = parsed as Record<string, unknown>;
+    const reviewMetricsRaw = root.review_metrics;
+    if (typeof reviewMetricsRaw !== "object" || reviewMetricsRaw === null || Array.isArray(reviewMetricsRaw)) return null;
+    const deltasRaw = (reviewMetricsRaw as Record<string, unknown>).phase_timings_delta_ms;
+    if (typeof deltasRaw !== "object" || deltasRaw === null || Array.isArray(deltasRaw)) return null;
+    const deltasSource = deltasRaw as Record<string, unknown>;
+    const deltas = {} as ReviewPhaseTimingDeltas;
+    for (const key of REVIEW_PHASE_TIMING_KEYS) {
+      const value = deltasSource[key];
+      if (value === null) {
+        deltas[key] = null;
+        continue;
+      }
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return null;
+      }
+      deltas[key] = Math.trunc(value);
+    }
+    return deltas;
+  } catch {
+    return null;
+  }
 }
 
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
@@ -1263,6 +1295,7 @@ export async function runReviewCommand(
   }
 
   let committed = false;
+  let phaseTimingDeltas: ReviewPhaseTimingDeltas | null = null;
 
   let summaryHeadSha: string | null = null;
   try {
@@ -1351,6 +1384,7 @@ export async function runReviewCommand(
       branch: context.branch,
       phaseTimings,
     });
+    phaseTimingDeltas = await readPersistedPhaseTimingDeltas();
   }
 
   if (!options.dryRun && options.autopush) {
@@ -1454,5 +1488,6 @@ export async function runReviewCommand(
     skippedPasses: executionPolicy.skippedPasses,
     agentInvocationRetryBudget: executionPolicy.agentInvocationRetryBudget,
     phaseTimings,
+    phaseTimingDeltas,
   };
 }

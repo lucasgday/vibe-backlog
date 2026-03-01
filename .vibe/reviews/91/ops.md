@@ -34,3 +34,8 @@ Operational/docs alignment is improved; README now documents new review metric f
 
 ### Findings
 - none
+
+## Run 2026-03-01T22:51:58Z
+Ops/release update:
+- Added automated coverage for timing history retention bounds to lock artifact behavior.
+- CLI now prints persisted timing deltas, improving on-call/debug ergonomics without changing external dependencies.

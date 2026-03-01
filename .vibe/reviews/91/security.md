@@ -40,3 +40,11 @@ No new security issues identified in this diff; changes do not expand command or
 
 ### Findings
 - none
+
+## Run 2026-03-01T22:51:58Z
+Threat model quick scan:
+This iteration exposes already-persisted numeric deltas in CLI logs and adds tests; it does not introduce new command execution paths.
+
+Checks and mitigations:
+- Delta output only includes numeric timing metadata from trusted local artifact writes.
+- No additional network calls, credentials, or secret-bearing fields introduced.
