@@ -18,3 +18,11 @@ No security regressions found in the changed behavior.
 
 ### Findings
 - none
+
+## Run 2026-03-01T23:15:10Z
+Threat model quick scan:
+Second pass mostly restructures data timing and output formatting. Security posture is unchanged; no extra external inputs or command paths were introduced.
+
+Checks and mitigations:
+- Debug schema versioning is additive and deterministic.
+- Review findings summary exposure uses already-generated local findings data.

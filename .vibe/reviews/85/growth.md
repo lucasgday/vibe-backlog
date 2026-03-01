@@ -14,3 +14,7 @@ Found 1 growth/instrumentation opportunity tied to the new debug surface.
 
 ### Findings
 - [P3] No measurement loop for rationale debug feature adoption or impact (src/cli-program.ts:2027)
+
+## Run 2026-03-01T23:15:10Z
+Growth update:
+- Added CLI metric line (`rationale_signals_metric`) with profile + fallback_count to create a lightweight adoption/quality measurement loop from logs.

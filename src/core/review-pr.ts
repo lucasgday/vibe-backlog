@@ -275,6 +275,7 @@ type ResolvePrParams = {
   issueLabels?: string[];
   branch: string;
   baseBranch: string;
+  changedFilesOverride?: string[] | null;
   dryRun: boolean;
 };
 
@@ -310,7 +311,8 @@ function buildAutoPrBody(params: {
 
 export async function resolveOrCreateReviewPullRequest(params: ResolvePrParams): Promise<ReviewPrSnapshot> {
   const { execaFn, issueId, issueTitle, issueLabels, branch, baseBranch, dryRun } = params;
-  const changedFiles = await listChangedFilesForRationale(execaFn, { baseBranch, branch });
+  const changedFiles =
+    Array.isArray(params.changedFilesOverride) ? params.changedFilesOverride.slice() : await listChangedFilesForRationale(execaFn, { baseBranch, branch });
 
   const listed = await runGhWithRetry(
     execaFn,

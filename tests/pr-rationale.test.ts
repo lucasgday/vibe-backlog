@@ -182,6 +182,7 @@ describe("pr rationale helpers", () => {
     });
 
     expect(debugA).toEqual(debugB);
+    expect(debugA.schema_version).toBe(1);
     expect(debugA.profile).toBe("code-only");
     expect(debugA.modules).toEqual(["cli", "pr"]);
     expect(debugA.fallback_reasons.some((reason) => reason.code === "changed-files-unavailable")).toBe(false);
@@ -200,6 +201,7 @@ describe("pr rationale helpers", () => {
     });
 
     expect(debug.profile).toBe("docs-only");
+    expect(debug.schema_version).toBe(1);
     expect(debug.modules).toContain("docs");
     expect(debug.fallback_reasons).toContainEqual(
       expect.objectContaining({

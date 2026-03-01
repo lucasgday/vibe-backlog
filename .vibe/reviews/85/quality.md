@@ -23,3 +23,14 @@ Found 1 quality gap in machine-readable contract stability.
 
 ### Findings
 - [P2] Machine-readable debug output lacks explicit schema contract/versioning (README.md:280)
+
+## Run 2026-03-01T23:15:10Z
+What I tested:
+- Verified rationale debug output now includes schema version and final review findings summary.
+- Verified no regression in `pr open`/`review` option behavior and rationale tests.
+- Re-ran full suite/build.
+
+Commands:
+- `pnpm test -- tests/pr-rationale.test.ts tests/cli-pr-open.test.ts tests/cli-review.test.ts tests/review-pr.test.ts`
+- `pnpm test`
+- `pnpm build`

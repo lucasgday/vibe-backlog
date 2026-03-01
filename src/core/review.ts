@@ -872,19 +872,10 @@ export async function runReviewCommand(
 
   emitProgress(onProgress, `loading issue #${context.issueId}`);
   const issue = await fetchIssueSnapshot(execaFn, context.issueId);
+  let rationaleChangedFiles: string[] | null = null;
   let rationaleSignals: RationaleSignalDebug | null = null;
   if (options.rationaleSignalsJson) {
-    const changedFiles = await listChangedFilesForRationale(execaFn, { baseBranch: context.baseBranch, branch: context.branch });
-    rationaleSignals = buildRationaleSignalDebug({
-      issueId: context.issueId,
-      issueTitle: issue.title,
-      branch: context.branch,
-      mode: "review",
-      signals: {
-        issueLabels: issue.labels,
-        changedFiles,
-      },
-    });
+    rationaleChangedFiles = await listChangedFilesForRationale(execaFn, { baseBranch: context.baseBranch, branch: context.branch });
   }
   const executionPolicy = resolveReviewExecutionPolicy({
     flow: flowKind,
@@ -910,6 +901,7 @@ export async function runReviewCommand(
     issueLabels: issue.labels,
     branch: context.branch,
     baseBranch: context.baseBranch,
+    changedFilesOverride: rationaleChangedFiles,
     dryRun: options.dryRun,
   });
 
@@ -1444,6 +1436,25 @@ export async function runReviewCommand(
 
   if (publishFailedError) {
     throw publishFailedError;
+  }
+
+  if (options.rationaleSignalsJson) {
+    const severities = Array.from(new Set(allFindings.map((finding) => finding.severity))).sort((a, b) => a.localeCompare(b));
+    rationaleSignals = buildRationaleSignalDebug({
+      issueId: context.issueId,
+      issueTitle: issue.title,
+      branch: context.branch,
+      mode: "review",
+      signals: {
+        issueLabels: issue.labels,
+        changedFiles: rationaleChangedFiles ?? [],
+        reviewFindings: {
+          total: allFindings.length,
+          unresolved: unresolvedFindings.length,
+          severities,
+        },
+      },
+    });
   }
 
   const summary = buildOutcomeSummaryMarkdown({

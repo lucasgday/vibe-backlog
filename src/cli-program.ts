@@ -236,6 +236,14 @@ function printPhaseTimingDeltas(prefix: string, deltas: Record<string, number | 
   }
 }
 
+function printRationaleSignalsDebug(prefix: string, payload: Record<string, unknown> | null): void {
+  if (!payload) return;
+  const profile = typeof payload.profile === "string" ? payload.profile : "unknown";
+  const fallbackCount = Array.isArray(payload.fallback_reasons) ? payload.fallback_reasons.length : 0;
+  console.log(`${prefix} rationale_signals_metric profile=${profile} fallback_count=${fallbackCount}`);
+  console.log(`${prefix} rationale_signals_json=\n${JSON.stringify(payload, null, 2)}`);
+}
+
 function collectRepeatedOption(value: string, previous: string[]): string[] {
   const normalized = String(value).trim();
   if (!normalized) return previous;
@@ -1443,7 +1451,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           execaFn,
         );
         if (Boolean(opts.rationaleSignalsJson)) {
-          console.log(`pr open: rationale_signals_json=${JSON.stringify(result.rationaleSignals)}`);
+          printRationaleSignalsDebug("pr open:", result.rationaleSignals as Record<string, unknown>);
         }
 
         if (result.dryRun) {
@@ -2023,8 +2031,8 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (result.findingTotalsWarning) {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
         }
-        if (Boolean(opts.rationaleSignalsJson) && result.rationaleSignals) {
-          console.log(`review: rationale_signals_json=${JSON.stringify(result.rationaleSignals)}`);
+        if (Boolean(opts.rationaleSignalsJson)) {
+          printRationaleSignalsDebug("review:", result.rationaleSignals as Record<string, unknown> | null);
         }
         printPhaseTimings("review:", result.phaseTimings);
         printPhaseTimingDeltas("review:", result.phaseTimingDeltas);

@@ -17,3 +17,8 @@ Found 1 operational efficiency issue in the review path.
 
 ### Findings
 - [P3] Changed-file discovery runs twice when review debug flag is enabled (src/core/review.ts:877)
+
+## Run 2026-03-01T23:15:10Z
+Ops update:
+- Review debug flow now avoids duplicated changed-file discovery by reusing changed-file signals across review rationale and PR resolution paths.
+- CLI output now emits human-scannable pretty JSON for debug payloads while preserving machine parseability.

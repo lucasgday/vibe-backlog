@@ -23,3 +23,8 @@ Found 1 CLI UX consistency/readability issue.
 
 ### Findings
 - [P3] Single-line prefixed JSON is hard to scan in normal terminal review flows (src/cli-program.ts:1446)
+
+## Run 2026-03-01T23:15:10Z
+UX update:
+- Replaced compact single-line JSON emission with multi-line pretty JSON block under the same prefix, improving terminal readability for humans.
+- Added concise metric line ahead of payload to keep scanning quick in noisy logs.

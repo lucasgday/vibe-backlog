@@ -252,11 +252,14 @@ describe.sequential("cli review", () => {
       profile: string;
       modules: string[];
       fallback_reasons: Array<{ code: string }>;
+      review_findings?: { total?: number; unresolved?: number };
     };
     expect(json.issue_id).toBe(42);
     expect(json.profile).toBe("code-only");
     expect(json.modules).toEqual(expect.arrayContaining(["cli", "pr"]));
-    expect(json.fallback_reasons).toContainEqual(expect.objectContaining({ code: "review-signals-unavailable" }));
+    expect(json.review_findings?.total).toBe(0);
+    expect(json.review_findings?.unresolved).toBe(0);
+    expect(json.fallback_reasons).toEqual([]);
   });
 
   it("emits progress logs during long review phases", async () => {

@@ -281,6 +281,7 @@ Options:
 - `--strict`: exit non-zero when unresolved findings remain after final attempt.
 - `--followup-label bug|enhancement`: override follow-up issue label.
 - `--rationale-signals-json`: print machine-readable rationale signal extraction details (`profile`, `modules`, `fallback_reasons`).
+  - Output contract: JSON includes `schema_version: 1` for compatibility checks.
 
 Compute class notes:
 
@@ -356,6 +357,7 @@ Options:
 - `--base <name>`: base branch override.
 - `--dry-run`: print PR payload plan only.
 - `--rationale-signals-json`: print machine-readable rationale signal extraction details (`profile`, `modules`, `fallback_reasons`).
+  - Output contract: JSON includes `schema_version: 1` for compatibility checks.
 - `--skip-review-gate`: bypass review gate and publish an auditable PR comment marker.
 - `--force-review`: force review rerun even when existing gate markers satisfy the current HEAD.
 

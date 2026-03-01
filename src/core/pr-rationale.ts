@@ -100,6 +100,7 @@ export type RationaleFallbackReason = {
 };
 
 export type RationaleSignalDebug = {
+  schema_version: 1;
   issue_id: number;
   issue_title: string;
   branch: string;
@@ -517,6 +518,7 @@ export function buildRationaleSections(context: RationaleContext): RationaleSect
 export function buildRationaleSignalDebug(context: RationaleContext): RationaleSignalDebug {
   const facts = buildFacts(context);
   return {
+    schema_version: 1,
     issue_id: context.issueId,
     issue_title: context.issueTitle,
     branch: context.branch,
