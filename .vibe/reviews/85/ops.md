@@ -5,3 +5,15 @@ Ops/release checks:
   - `vibe pr open --rationale-signals-json`
   - `vibe review --rationale-signals-json`
 - README command reference updated to document new options.
+
+## Run 2026-03-01T23:11:44.757Z
+- run_id: issue-85-pr-93-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Found 1 operational efficiency issue in the review path.
+
+### Findings
+- [P3] Changed-file discovery runs twice when review debug flag is enabled (src/core/review.ts:877)

@@ -11,3 +11,15 @@ Commands:
 
 Untested:
 - Live GH/real-repo rationale debug output outside mocked CLI tests.
+
+## Run 2026-03-01T23:11:44.756Z
+- run_id: issue-85-pr-93-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: yes
+
+### Summary
+Found 1 quality gap in machine-readable contract stability.
+
+### Findings
+- [P2] Machine-readable debug output lacks explicit schema contract/versioning (README.md:280)
