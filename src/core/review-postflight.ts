@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_POSTFLIGHT_PATH = path.join(".vibe", "artifacts", "postflight.json");
+const PHASE_TIMINGS_HISTORY_MAX_ENTRIES = 20;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,6 +27,10 @@ export type ReviewPhaseTiming = {
 };
 
 export type ReviewPhaseTimings = Record<ReviewPhaseTimingKey, ReviewPhaseTiming>;
+export type ReviewPhaseTimingsHistoryEntry = {
+  recorded_at: string;
+  phase_timings_ms: ReviewPhaseTimings;
+};
 
 export function createDefaultReviewPhaseTimings(): ReviewPhaseTimings {
   const timings = {} as ReviewPhaseTimings;
@@ -75,12 +80,50 @@ function ensureWorkSection(root: JsonRecord, issueId: number, branch: string): v
   root.work = workRaw;
 }
 
+function cloneReviewPhaseTimings(phaseTimings: ReviewPhaseTimings): ReviewPhaseTimings {
+  const clone = {} as ReviewPhaseTimings;
+  for (const key of REVIEW_PHASE_TIMING_KEYS) {
+    const timing = phaseTimings[key];
+    clone[key] = {
+      elapsed_ms: timing.elapsed_ms,
+      status: timing.status,
+      runs: timing.runs,
+      error: timing.error,
+    };
+  }
+  return clone;
+}
+
 function writePhaseTimings(root: JsonRecord, phaseTimings: ReviewPhaseTimings): void {
   const reviewMetricsRaw =
     typeof root.review_metrics === "object" && root.review_metrics !== null && !Array.isArray(root.review_metrics)
       ? (root.review_metrics as JsonRecord)
       : {};
-  reviewMetricsRaw.phase_timings_ms = phaseTimings;
+  const snapshot = cloneReviewPhaseTimings(phaseTimings);
+  reviewMetricsRaw.phase_timings_ms = snapshot;
+
+  const historyRaw = Array.isArray(reviewMetricsRaw.phase_timings_ms_history)
+    ? reviewMetricsRaw.phase_timings_ms_history
+    : [];
+  const history = historyRaw.filter((entry): entry is ReviewPhaseTimingsHistoryEntry => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+    const candidate = entry as Record<string, unknown>;
+    return (
+      typeof candidate.recorded_at === "string" &&
+      typeof candidate.phase_timings_ms === "object" &&
+      candidate.phase_timings_ms !== null &&
+      !Array.isArray(candidate.phase_timings_ms)
+    );
+  });
+  history.push({
+    recorded_at: new Date().toISOString(),
+    phase_timings_ms: cloneReviewPhaseTimings(snapshot),
+  });
+  if (history.length > PHASE_TIMINGS_HISTORY_MAX_ENTRIES) {
+    history.splice(0, history.length - PHASE_TIMINGS_HISTORY_MAX_ENTRIES);
+  }
+  reviewMetricsRaw.phase_timings_ms_history = history;
+
   root.review_metrics = reviewMetricsRaw;
 }
 

@@ -1617,9 +1617,9 @@ describe.sequential("cli review", () => {
 
     const executed: string[] = [];
     let statusCalls = 0;
-    const firstHead = "feedface111111111111111111111111111111111111";
+    const initialHead = "abc123def000000000000000000000000000000000";
     const finalHead = "feedface222222222222222222222222222222222222";
-    let currentHead = "abc123def000000000000000000000000000000000";
+    let currentHead = initialHead;
     let commitCalls = 0;
     let summaryCommentBody: string | null = null;
     const publishedSummaryBodies: string[] = [];
@@ -1633,9 +1633,9 @@ describe.sequential("cli review", () => {
         statusCalls += 1;
         if (statusCalls === 1) return { stdout: "" };
         if (statusCalls === 2) return { stdout: " M .vibe/artifacts/postflight.json\n M .vibe/reviews/34/implementation.md\n" };
-        if (statusCalls === 4) return { stdout: " M .vibe/artifacts/postflight.json\n" };
-        if (statusCalls === 5) return { stdout: " M .vibe/artifacts/postflight.json\n" };
-        return { stdout: "" };
+        if (statusCalls === 3) return { stdout: " M .vibe/artifacts/postflight.json\n M .vibe/reviews/34/implementation.md\n" };
+        if (statusCalls === 4) return { stdout: "" };
+        throw new Error(`unexpected status check #${statusCalls}`);
       }
       if (cmd === "git" && args[0] === "add" && args[1] === "-A") {
         const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
@@ -1648,7 +1648,7 @@ describe.sequential("cli review", () => {
       }
       if (cmd === "git" && args[0] === "commit") {
         commitCalls += 1;
-        currentHead = commitCalls === 1 ? firstHead : finalHead;
+        currentHead = finalHead;
         return { stdout: "[codex/issue-34-vibe-review abc1234] review\n", stderr: "", exitCode: 0 };
       }
       if (cmd === "git" && args[0] === "push") return { stdout: "" };
@@ -1716,22 +1716,42 @@ describe.sequential("cli review", () => {
     const addIndex = executed.findIndex((entry) => entry.startsWith("git add -A"));
     const commitIndex = executed.findIndex((entry) => entry.startsWith("git commit -m"));
     const pushIndex = executed.findIndex((entry) => entry.startsWith("git push"));
+    const firstPublishIndex = executed.findIndex((entry) =>
+      entry.startsWith("gh api --method POST repos/acme/demo/issues/99/comments"),
+    );
+    const refreshedPublishIndex = executed.findIndex((entry) =>
+      entry.startsWith("gh api --method PATCH repos/acme/demo/issues/comments/9001"),
+    );
     const commitCount = executed.filter((entry) => entry.startsWith("git commit -m")).length;
     const pushCount = executed.filter((entry) => entry.startsWith("git push")).length;
     expect(addIndex).toBeGreaterThan(-1);
+    expect(firstPublishIndex).toBeGreaterThan(-1);
     expect(commitIndex).toBeGreaterThan(addIndex);
+    expect(commitIndex).toBeGreaterThan(firstPublishIndex);
     expect(pushIndex).toBeGreaterThan(commitIndex);
-    expect(commitCount).toBe(2);
-    expect(pushCount).toBe(2);
+    expect(refreshedPublishIndex).toBeGreaterThan(pushIndex);
+    expect(commitCount).toBe(1);
+    expect(pushCount).toBe(1);
+    expect(commitCalls).toBe(1);
+    expect(statusCalls).toBe(4);
     const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
     const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
       review_metrics?: {
         phase_timings_ms?: Record<string, { status?: string; elapsed_ms?: number }>;
+        phase_timings_ms_history?: Array<{
+          recorded_at?: string;
+          phase_timings_ms?: Record<string, { status?: string }>;
+        }>;
       };
     };
     expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
     expect(typeof parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.elapsed_ms).toBe("number");
-    expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${firstHead}`))).toBe(true);
+    const timingsHistory = parsed.review_metrics?.phase_timings_ms_history ?? [];
+    expect(timingsHistory.length).toBeGreaterThanOrEqual(2);
+    expect(timingsHistory[0]?.recorded_at).toBeTruthy();
+    expect(timingsHistory[0]?.phase_timings_ms?.publish_review_artifacts?.status).toBe("skipped");
+    expect(timingsHistory.at(-1)?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
+    expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${initialHead}`))).toBe(true);
     expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${finalHead}`))).toBe(true);
   });
 

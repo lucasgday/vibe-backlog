@@ -700,7 +700,7 @@ function buildOutcomeSummaryMarkdown(params: {
     }
   }
   lines.push("", "### Phase Timings");
-  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms`.");
+  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms` and history snapshots in `review_metrics.phase_timings_ms_history`.");
   lines.push(`- Phases: ${REVIEW_PHASE_TIMING_KEYS.join(", ")}`);
 
   if (!lifecycleSummary) {
@@ -1256,19 +1256,11 @@ export async function runReviewCommand(
       summary: summaryForArtifacts,
       issueId: context.issueId,
       branch: context.branch,
+      phaseTimings,
     });
   }
 
   let committed = false;
-  if (!options.dryRun && options.autopush) {
-    committed = await runWithProgressHeartbeat(onProgress, "git commit/push autofix", () =>
-      commitAndPushChanges(execaFn, finalOutput.run_id),
-    );
-    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
-    if (trackedChangesRemain) {
-      throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
-    }
-  }
 
   let summaryHeadSha: string | null = null;
   try {
@@ -1358,40 +1350,37 @@ export async function runReviewCommand(
   if (!options.dryRun && options.autopush) {
     const trackedChangesAfterFinalTimingPersistence = await hasTrackedWorkingTreeChanges(execaFn);
     if (trackedChangesAfterFinalTimingPersistence) {
-      const finalizedPersistenceCommitted = await runWithProgressHeartbeat(
-        onProgress,
-        "git commit/push finalized review artifacts",
-        () => commitAndPushChanges(execaFn, finalOutput.run_id),
+      committed = await runWithProgressHeartbeat(onProgress, "git commit/push review artifacts", () =>
+        commitAndPushChanges(execaFn, finalOutput.run_id),
       );
-      committed = committed || finalizedPersistenceCommitted;
+    }
 
-      const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
-      if (trackedChangesRemain) {
-        throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
+    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesRemain) {
+      throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
+    }
+
+    if (committed && options.publish) {
+      let refreshedHeadSha: string | null = null;
+      try {
+        refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
+      } catch {
+        refreshedHeadSha = null;
       }
 
-      if (finalizedPersistenceCommitted && options.publish) {
-        let refreshedHeadSha: string | null = null;
-        try {
-          refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
-        } catch {
-          refreshedHeadSha = null;
-        }
-
-        await runWithProgressHeartbeat(
-          onProgress,
-          `refresh review summary for final HEAD on PR #${pr.number}`,
-          () =>
-            publishReviewToPullRequest({
-              execaFn,
-              repo,
-              pr,
-              summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
-              findings: [],
-              dryRun: options.dryRun,
-            }),
-        );
-      }
+      await runWithProgressHeartbeat(
+        onProgress,
+        `refresh review summary for final HEAD on PR #${pr.number}`,
+        () =>
+          publishReviewToPullRequest({
+            execaFn,
+            repo,
+            pr,
+            summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
+            findings: [],
+            dryRun: options.dryRun,
+          }),
+      );
     }
   }
 
