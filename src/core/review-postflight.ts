@@ -31,6 +31,7 @@ export type ReviewPhaseTimingsHistoryEntry = {
   recorded_at: string;
   phase_timings_ms: ReviewPhaseTimings;
 };
+export type ReviewPhaseTimingDeltas = Record<ReviewPhaseTimingKey, number | null>;
 
 export function createDefaultReviewPhaseTimings(): ReviewPhaseTimings {
   const timings = {} as ReviewPhaseTimings;
@@ -94,12 +95,33 @@ function cloneReviewPhaseTimings(phaseTimings: ReviewPhaseTimings): ReviewPhaseT
   return clone;
 }
 
+function computePhaseTimingDeltas(previousRaw: unknown, current: ReviewPhaseTimings): ReviewPhaseTimingDeltas {
+  const previous =
+    typeof previousRaw === "object" && previousRaw !== null && !Array.isArray(previousRaw)
+      ? (previousRaw as Record<string, unknown>)
+      : null;
+  const deltas = {} as ReviewPhaseTimingDeltas;
+  for (const key of REVIEW_PHASE_TIMING_KEYS) {
+    const previousEntryRaw = previous?.[key];
+    let previousElapsed: number | null = null;
+    if (typeof previousEntryRaw === "object" && previousEntryRaw !== null && !Array.isArray(previousEntryRaw)) {
+      const elapsedRaw = (previousEntryRaw as Record<string, unknown>).elapsed_ms;
+      if (typeof elapsedRaw === "number" && Number.isFinite(elapsedRaw)) {
+        previousElapsed = Math.max(0, Math.trunc(elapsedRaw));
+      }
+    }
+    deltas[key] = previousElapsed === null ? null : current[key].elapsed_ms - previousElapsed;
+  }
+  return deltas;
+}
+
 function writePhaseTimings(root: JsonRecord, phaseTimings: ReviewPhaseTimings): void {
   const reviewMetricsRaw =
     typeof root.review_metrics === "object" && root.review_metrics !== null && !Array.isArray(root.review_metrics)
       ? (root.review_metrics as JsonRecord)
       : {};
   const snapshot = cloneReviewPhaseTimings(phaseTimings);
+  reviewMetricsRaw.phase_timings_delta_ms = computePhaseTimingDeltas(reviewMetricsRaw.phase_timings_ms, snapshot);
   reviewMetricsRaw.phase_timings_ms = snapshot;
 
   const historyRaw = Array.isArray(reviewMetricsRaw.phase_timings_ms_history)

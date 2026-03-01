@@ -700,7 +700,9 @@ function buildOutcomeSummaryMarkdown(params: {
     }
   }
   lines.push("", "### Phase Timings");
-  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms` and history snapshots in `review_metrics.phase_timings_ms_history`.");
+  lines.push(
+    "- Structured timings persisted in postflight `review_metrics.phase_timings_ms`, with deltas in `review_metrics.phase_timings_delta_ms` and history snapshots in `review_metrics.phase_timings_ms_history`.",
+  );
   lines.push(`- Phases: ${REVIEW_PHASE_TIMING_KEYS.join(", ")}`);
 
   if (!lifecycleSummary) {
@@ -1269,6 +1271,8 @@ export async function runReviewCommand(
     summaryHeadSha = null;
   }
 
+  let publishFailedError: Error | null = null;
+  let publishCompleted = false;
   if (options.publish) {
     const publishStartedAt = Date.now();
     try {
@@ -1286,6 +1290,7 @@ export async function runReviewCommand(
           }),
       );
       markPhaseTiming(phaseTimings, "publish_review_artifacts", toElapsedMilliseconds(publishStartedAt), "completed");
+      publishCompleted = true;
     } catch (error) {
       markPhaseTiming(
         phaseTimings,
@@ -1294,11 +1299,12 @@ export async function runReviewCommand(
         "failed",
         formatErrorMessage(error),
       );
-      throw error;
+      publishFailedError =
+        error instanceof Error ? error : new Error(`review: publish review artifacts failed (${formatErrorMessage(error)}).`);
     }
   }
 
-  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+  if (publishCompleted && options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
     const postCleanupStartedAt = Date.now();
     try {
       const postCleanup = await runWithProgressHeartbeat(
@@ -1360,7 +1366,7 @@ export async function runReviewCommand(
       throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
     }
 
-    if (committed && options.publish) {
+    if (committed && options.publish && publishCompleted) {
       let refreshedHeadSha: string | null = null;
       try {
         refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
@@ -1382,6 +1388,10 @@ export async function runReviewCommand(
           }),
       );
     }
+  }
+
+  if (publishFailedError) {
+    throw publishFailedError;
   }
 
   const summary = buildOutcomeSummaryMarkdown({

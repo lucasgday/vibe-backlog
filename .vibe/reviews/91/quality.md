@@ -23,3 +23,17 @@ Found 1 test gap for the new failure-path behavior.
 
 ### Findings
 - [P2] No regression test for autopush behavior when publish phase fails (tests/cli-review.test.ts:1606)
+
+## Run 2026-03-01T22:47:55Z
+What I tested:
+- Publish-failure path now commits persisted artifacts before command exits with error.
+- Success path still refreshes PR summary with final HEAD and persists timing history/delta fields.
+- Full regression run for CLI/test matrix and build output.
+
+Commands:
+- `pnpm test -- tests/cli-review.test.ts`
+- `pnpm test`
+- `pnpm build`
+
+Untested:
+- Real network/API failure variants beyond mocked `gh api` publish error.

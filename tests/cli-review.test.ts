@@ -1738,6 +1738,7 @@ describe.sequential("cli review", () => {
     const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
       review_metrics?: {
         phase_timings_ms?: Record<string, { status?: string; elapsed_ms?: number }>;
+        phase_timings_delta_ms?: Record<string, number | null>;
         phase_timings_ms_history?: Array<{
           recorded_at?: string;
           phase_timings_ms?: Record<string, { status?: string }>;
@@ -1746,6 +1747,7 @@ describe.sequential("cli review", () => {
     };
     expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
     expect(typeof parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.elapsed_ms).toBe("number");
+    expect(typeof parsed.review_metrics?.phase_timings_delta_ms?.publish_review_artifacts).toBe("number");
     const timingsHistory = parsed.review_metrics?.phase_timings_ms_history ?? [];
     expect(timingsHistory.length).toBeGreaterThanOrEqual(2);
     expect(timingsHistory[0]?.recorded_at).toBeTruthy();
@@ -1753,6 +1755,101 @@ describe.sequential("cli review", () => {
     expect(timingsHistory.at(-1)?.phase_timings_ms?.publish_review_artifacts?.status).toBe("completed");
     expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${initialHead}`))).toBe(true);
     expect(publishedSummaryBodies.some((body) => body.includes(`vibe:review-head:${finalHead}`))).toBe(true);
+  });
+
+  it("commits persisted artifacts before surfacing publish failures", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+    await writeTurnContext({
+      issue_id: 34,
+      branch: "codex/issue-34-vibe-review",
+      base_branch: "main",
+      started_at: "2026-02-16T00:00:00.000Z",
+      issue_title: "review command",
+    });
+    mkdirSync(path.join(tempDir, ".vibe", "artifacts"), { recursive: true });
+    writeFileSync(path.join(tempDir, ".vibe", "artifacts", "postflight.json"), JSON.stringify({ version: 1 }, null, 2), "utf8");
+
+    const executed: string[] = [];
+    let statusCalls = 0;
+    const errors: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      executed.push([cmd, ...args].join(" "));
+
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "codex/issue-34-vibe-review\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "feedface000000000000000000000000000000000000\n" };
+      if (cmd === "git" && args[0] === "status" && args[1] === "--porcelain") {
+        statusCalls += 1;
+        if (statusCalls === 1) return { stdout: "" };
+        if (statusCalls === 2) return { stdout: " M .vibe/artifacts/postflight.json\n" };
+        if (statusCalls === 3) return { stdout: " M .vibe/artifacts/postflight.json\n" };
+        if (statusCalls === 4) return { stdout: "" };
+        throw new Error(`unexpected status check #${statusCalls}`);
+      }
+      if (cmd === "git" && args[0] === "add") return { stdout: "" };
+      if (cmd === "git" && args[0] === "commit") return { stdout: "[branch abc123] review\n", stderr: "", exitCode: 0 };
+      if (cmd === "git" && args[0] === "push") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view")
+        return { stdout: JSON.stringify({ title: "review command", url: "https://example.test/issues/34", milestone: null }) };
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list")
+        return { stdout: JSON.stringify([{ number: 99, url: "https://example.test/pull/99", headRefOid: "abc123", body: "Fixes #34" }]) };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-publish-fail", findingsCount: 0 }) };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "review") return { stdout: "" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues/99/comments?per_page=100&page=1") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "--method" && args[2] === "POST" && args[3] === "repos/acme/demo/issues/99/comments") {
+        throw new Error("simulated publish failure");
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/pulls/99/comments?per_page=100&page=1") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        const queryArg = args.find((entry) => String(entry).startsWith("query=")) ?? "";
+        if (String(queryArg).includes("reviewThreads(first:100")) {
+          return {
+            stdout: JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                  },
+                },
+              },
+            }),
+          };
+        }
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("simulated publish failure"))).toBe(true);
+    expect(executed.filter((entry) => entry.startsWith("git commit -m")).length).toBe(1);
+    expect(executed.filter((entry) => entry.startsWith("git push")).length).toBe(1);
+    expect(statusCalls).toBe(4);
+    expect(executed.some((entry) => entry.startsWith("gh api --method PATCH repos/acme/demo/issues/comments/"))).toBe(false);
+
+    const postflightPath = path.join(tempDir, ".vibe", "artifacts", "postflight.json");
+    const parsed = JSON.parse(readFileSync(postflightPath, "utf8")) as {
+      review_metrics?: {
+        phase_timings_ms?: Record<string, { status?: string; error?: string | null }>;
+        phase_timings_delta_ms?: Record<string, number | null>;
+        phase_timings_ms_history?: Array<{
+          phase_timings_ms?: Record<string, { status?: string }>;
+        }>;
+      };
+    };
+    expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.status).toBe("failed");
+    expect(parsed.review_metrics?.phase_timings_ms?.publish_review_artifacts?.error).toContain("simulated publish failure");
+    expect(typeof parsed.review_metrics?.phase_timings_delta_ms?.publish_review_artifacts).toBe("number");
+    expect(parsed.review_metrics?.phase_timings_ms_history?.at(-1)?.phase_timings_ms?.publish_review_artifacts?.status).toBe("failed");
   });
 
   it("keeps review successful when thread auto-resolve has partial failures", async () => {

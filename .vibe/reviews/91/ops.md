@@ -17,3 +17,8 @@ Found 1 operational docs/contract follow-up.
 
 ### Findings
 - [P3] Additive artifact field lacks explicit contract/documentation update (src/core/review-postflight.ts:78)
+
+## Run 2026-03-01T22:47:55Z
+Ops/release update:
+- Added explicit README contract notes for review timing fields (`phase_timings_ms`, `phase_timings_delta_ms`, `phase_timings_ms_history`).
+- Verified deterministic failure behavior: publish errors no longer skip artifact commit/push in autopush mode.

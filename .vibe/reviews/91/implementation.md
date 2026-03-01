@@ -21,3 +21,17 @@ Found 1 regression risk in the new autopush/publish ordering.
 
 ### Findings
 - [P1] Autopush is skipped when publish fails, leaving review artifacts uncommitted (src/core/review.ts:1280)
+
+## Run 2026-03-01T22:47:55Z
+- Scope: resolve remaining `issue-91-review-pass-1` findings from PR #92 gate.
+- Changes:
+  - Kept autopush enabled even when publish fails by deferring publish error throw until after final timing persistence + git commit/push.
+  - Added publish-completion gating for post-publish cleanup and final summary refresh.
+  - Added `review_metrics.phase_timings_delta_ms` (delta vs previous snapshot) for actionable trend signals.
+  - Documented review metrics contract additions in README.
+  - Added failure-path regression test proving artifacts are committed before publish failure exits.
+- Files:
+  - src/core/review.ts
+  - src/core/review-postflight.ts
+  - tests/cli-review.test.ts
+  - README.md

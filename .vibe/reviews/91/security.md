@@ -19,3 +19,12 @@ No new security defects identified in the diff.
 
 ### Findings
 - none
+
+## Run 2026-03-01T22:47:55Z
+Threat model quick scan:
+Handling publish failures now continues through artifact persistence and autopush before surfacing the error. Main security concern is preserving deterministic failure semantics without masking publish errors.
+
+Checks and mitigations:
+- Publish failures are still surfaced (command exits non-zero) after persistence, so operator visibility is preserved.
+- No new credentials/network pathways added; only control-flow ordering changed.
+- Delta metrics are derived from existing numeric timing fields; no sensitive payload expansion introduced.

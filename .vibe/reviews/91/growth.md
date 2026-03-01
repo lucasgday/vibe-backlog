@@ -15,3 +15,8 @@ Found 1 product-growth instrumentation opportunity.
 
 ### Findings
 - [P3] Phase timing history is stored but not converted into actionable trend signals (src/core/review-postflight.ts:5)
+
+## Run 2026-03-01T22:47:55Z
+Growth/learning outcomes:
+- Added `phase_timings_delta_ms` to make each write immediately comparable against previous snapshot without external tooling.
+- This enables lightweight anomaly detection (e.g., sudden publish latency spikes) directly from postflight artifacts.

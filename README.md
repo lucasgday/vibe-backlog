@@ -309,6 +309,12 @@ Follow-up issue behavior:
 - Auto-close failures are emitted in the review summary warnings and do not abort `vibe review`.
 - Review prompt treats `.vibe/reviews/<issue>/*.md` and `.vibe/artifacts/postflight.json` as expected generated artifacts (not unplanned changes by themselves).
 
+Postflight review metrics:
+
+- `review_metrics.phase_timings_ms`: latest per-phase elapsed/status snapshot for the run.
+- `review_metrics.phase_timings_delta_ms`: delta in milliseconds vs previous persisted snapshot (null when no previous snapshot exists).
+- `review_metrics.phase_timings_ms_history`: bounded snapshot history (latest 20 entries) to compare trend changes within/after review runs.
+
 Provider resolution (highest priority first):
 
 1. `--agent-cmd`
