@@ -28,3 +28,15 @@ Found 1 CLI UX consistency/readability issue.
 UX update:
 - Replaced compact single-line JSON emission with multi-line pretty JSON block under the same prefix, improving terminal readability for humans.
 - Added concise metric line ahead of payload to keep scanning quick in noisy logs.
+
+## Run 2026-03-01T23:16:05.585Z
+- run_id: issue-85-pr-93-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+CLI debug output readability/scanability is improved and consistent for terminal usage assumptions.
+
+### Findings
+- none

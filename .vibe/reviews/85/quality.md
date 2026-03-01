@@ -34,3 +34,15 @@ Commands:
 - `pnpm test -- tests/pr-rationale.test.ts tests/cli-pr-open.test.ts tests/cli-review.test.ts tests/review-pr.test.ts`
 - `pnpm test`
 - `pnpm build`
+
+## Run 2026-03-01T23:16:05.585Z
+- run_id: issue-85-pr-93-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Contract/versioning and test coverage for rationale debug output are now adequate for this scope.
+
+### Findings
+- none

@@ -18,3 +18,15 @@ Found 1 growth/instrumentation opportunity tied to the new debug surface.
 ## Run 2026-03-01T23:15:10Z
 Growth update:
 - Added CLI metric line (`rationale_signals_metric`) with profile + fallback_count to create a lightweight adoption/quality measurement loop from logs.
+
+## Run 2026-03-01T23:16:05.585Z
+- run_id: issue-85-pr-93-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: yes
+
+### Summary
+Added metric-style signal output creates a basic instrumentation loop for adoption/quality tracking.
+
+### Findings
+- none
