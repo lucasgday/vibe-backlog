@@ -221,6 +221,21 @@ function printPhaseTimings(prefix: string, timings: Record<string, PhaseTimingLo
   }
 }
 
+function printPhaseTimingDeltas(prefix: string, deltas: Record<string, number | null> | null): void {
+  if (!deltas) return;
+  console.log(`${prefix} phase_timings_delta_ms:`);
+  const keys = Object.keys(deltas).sort();
+  for (const key of keys) {
+    const delta = deltas[key];
+    if (delta === null || !Number.isFinite(delta)) {
+      console.log(`${prefix} phase=${key} delta_ms=n/a`);
+      continue;
+    }
+    const sign = delta >= 0 ? "+" : "";
+    console.log(`${prefix} phase=${key} delta_ms=${sign}${delta}`);
+  }
+}
+
 function collectRepeatedOption(value: string, previous: string[]): string[] {
   const normalized = String(value).trim();
   if (!normalized) return previous;
@@ -1524,6 +1539,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           `pr open: review policy class=${reviewResult.computeClass} pass_profile=${reviewResult.passProfile} agent_retry_budget=${reviewResult.agentInvocationRetryBudget}`,
         );
         printPhaseTimings("pr open: review", reviewResult.phaseTimings);
+        printPhaseTimingDeltas("pr open: review", reviewResult.phaseTimingDeltas);
         if (reviewResult.rationaleAutofilled) {
           console.log("pr open: rationale sections autofilled in existing PR body.");
         }
@@ -2002,6 +2018,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
         }
         printPhaseTimings("review:", result.phaseTimings);
+        printPhaseTimingDeltas("review:", result.phaseTimingDeltas);
         if (result.rationaleAutofilled) {
           console.log("review: rationale sections autofilled in existing PR body.");
         }

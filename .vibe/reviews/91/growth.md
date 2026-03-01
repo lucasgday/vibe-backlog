@@ -1,0 +1,51 @@
+## Run 2026-03-01T22:41:00Z
+Growth/learning opportunities:
+- The new `phase_timings_ms_history` enables simple trend detection (regressions in publish/cleanup latencies) without external storage.
+- Follow-up idea: add a lightweight CLI summary (`vibe review --timings`) showing delta vs previous snapshot to surface slowdowns during dogfooding.
+- Instrumentation gap: no percentile aggregation yet across runs; a future issue can aggregate history into p50/p95 per phase.
+
+## Run 2026-03-01T22:43:51.482Z
+- run_id: issue-91-review-pass-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Found 1 product-growth instrumentation opportunity.
+
+### Findings
+- [P3] Phase timing history is stored but not converted into actionable trend signals (src/core/review-postflight.ts:5)
+
+## Run 2026-03-01T22:47:55Z
+Growth/learning outcomes:
+- Added `phase_timings_delta_ms` to make each write immediately comparable against previous snapshot without external tooling.
+- This enables lightweight anomaly detection (e.g., sudden publish latency spikes) directly from postflight artifacts.
+
+## Run 2026-03-01T22:49:15.307Z
+- run_id: issue-91-review-pass-2
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Core growth instrumentation improved with timing deltas, with one follow-up opportunity for operator visibility.
+
+### Findings
+- [P3] Timing delta signals are persisted but not surfaced to users/operators (src/core/review-postflight.ts:104)
+
+## Run 2026-03-01T22:51:58Z
+Growth/learning outcomes:
+- Timing delta signals are now operator-visible in CLI logs, reducing the gap between stored telemetry and actionable diagnosis.
+- Retention-cap tests protect trend continuity expectations from future regressions.
+
+## Run 2026-03-01T22:52:45.419Z
+- run_id: issue-91-review-pass-3
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Growth instrumentation is now materially improved with persisted timing deltas plus operator-visible delta logs.
+
+### Findings
+- none

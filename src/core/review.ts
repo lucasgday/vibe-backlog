@@ -1,4 +1,4 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import {
@@ -28,6 +28,7 @@ import {
   createDefaultReviewPhaseTimings,
   REVIEW_PHASE_TIMING_KEYS,
   type ReviewPhaseTimingKey,
+  type ReviewPhaseTimingDeltas,
   type ReviewPhaseTimingStatus,
   type ReviewPhaseTimings,
   upsertReviewPhaseTimingsInPostflight,
@@ -106,6 +107,7 @@ export type ReviewCommandResult = {
   skippedPasses: readonly (typeof REVIEW_PASS_ORDER)[number][];
   agentInvocationRetryBudget: number;
   phaseTimings: ReviewPhaseTimings;
+  phaseTimingDeltas: ReviewPhaseTimingDeltas | null;
 };
 
 type ReviewRunContext = {
@@ -202,6 +204,36 @@ function finalizePendingDraftCleanupTiming(timings: ReviewPhaseTimings): void {
 
   total.status = "completed";
   total.error = null;
+}
+
+async function readPersistedPhaseTimingDeltas(): Promise<ReviewPhaseTimingDeltas | null> {
+  try {
+    const filePath = path.resolve(process.cwd(), ".vibe", "artifacts", "postflight.json");
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const root = parsed as Record<string, unknown>;
+    const reviewMetricsRaw = root.review_metrics;
+    if (typeof reviewMetricsRaw !== "object" || reviewMetricsRaw === null || Array.isArray(reviewMetricsRaw)) return null;
+    const deltasRaw = (reviewMetricsRaw as Record<string, unknown>).phase_timings_delta_ms;
+    if (typeof deltasRaw !== "object" || deltasRaw === null || Array.isArray(deltasRaw)) return null;
+    const deltasSource = deltasRaw as Record<string, unknown>;
+    const deltas = {} as ReviewPhaseTimingDeltas;
+    for (const key of REVIEW_PHASE_TIMING_KEYS) {
+      const value = deltasSource[key];
+      if (value === null) {
+        deltas[key] = null;
+        continue;
+      }
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return null;
+      }
+      deltas[key] = Math.trunc(value);
+    }
+    return deltas;
+  } catch {
+    return null;
+  }
 }
 
 function parseIssueIdOverride(value: string | number | null | undefined): number | null {
@@ -700,7 +732,9 @@ function buildOutcomeSummaryMarkdown(params: {
     }
   }
   lines.push("", "### Phase Timings");
-  lines.push("- Structured timings persisted in postflight `review_metrics.phase_timings_ms`.");
+  lines.push(
+    "- Structured timings persisted in postflight `review_metrics.phase_timings_ms`, with deltas in `review_metrics.phase_timings_delta_ms` and history snapshots in `review_metrics.phase_timings_ms_history`.",
+  );
   lines.push(`- Phases: ${REVIEW_PHASE_TIMING_KEYS.join(", ")}`);
 
   if (!lifecycleSummary) {
@@ -1256,19 +1290,12 @@ export async function runReviewCommand(
       summary: summaryForArtifacts,
       issueId: context.issueId,
       branch: context.branch,
+      phaseTimings,
     });
   }
 
   let committed = false;
-  if (!options.dryRun && options.autopush) {
-    committed = await runWithProgressHeartbeat(onProgress, "git commit/push autofix", () =>
-      commitAndPushChanges(execaFn, finalOutput.run_id),
-    );
-    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
-    if (trackedChangesRemain) {
-      throw new Error("review: artifacts persistence incomplete (tracked changes remain after autopush).");
-    }
-  }
+  let phaseTimingDeltas: ReviewPhaseTimingDeltas | null = null;
 
   let summaryHeadSha: string | null = null;
   try {
@@ -1277,6 +1304,8 @@ export async function runReviewCommand(
     summaryHeadSha = null;
   }
 
+  let publishFailedError: Error | null = null;
+  let publishCompleted = false;
   if (options.publish) {
     const publishStartedAt = Date.now();
     try {
@@ -1294,6 +1323,7 @@ export async function runReviewCommand(
           }),
       );
       markPhaseTiming(phaseTimings, "publish_review_artifacts", toElapsedMilliseconds(publishStartedAt), "completed");
+      publishCompleted = true;
     } catch (error) {
       markPhaseTiming(
         phaseTimings,
@@ -1302,11 +1332,12 @@ export async function runReviewCommand(
         "failed",
         formatErrorMessage(error),
       );
-      throw error;
+      publishFailedError =
+        error instanceof Error ? error : new Error(`review: publish review artifacts failed (${formatErrorMessage(error)}).`);
     }
   }
 
-  if (options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
+  if (publishCompleted && options.publish && !options.dryRun && unresolvedFindings.length === 0 && pr.number > 0) {
     const postCleanupStartedAt = Date.now();
     try {
       const postCleanup = await runWithProgressHeartbeat(
@@ -1353,46 +1384,48 @@ export async function runReviewCommand(
       branch: context.branch,
       phaseTimings,
     });
+    phaseTimingDeltas = await readPersistedPhaseTimingDeltas();
   }
 
   if (!options.dryRun && options.autopush) {
     const trackedChangesAfterFinalTimingPersistence = await hasTrackedWorkingTreeChanges(execaFn);
     if (trackedChangesAfterFinalTimingPersistence) {
-      const finalizedPersistenceCommitted = await runWithProgressHeartbeat(
-        onProgress,
-        "git commit/push finalized review artifacts",
-        () => commitAndPushChanges(execaFn, finalOutput.run_id),
+      committed = await runWithProgressHeartbeat(onProgress, "git commit/push review artifacts", () =>
+        commitAndPushChanges(execaFn, finalOutput.run_id),
       );
-      committed = committed || finalizedPersistenceCommitted;
-
-      const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
-      if (trackedChangesRemain) {
-        throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
-      }
-
-      if (finalizedPersistenceCommitted && options.publish) {
-        let refreshedHeadSha: string | null = null;
-        try {
-          refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
-        } catch {
-          refreshedHeadSha = null;
-        }
-
-        await runWithProgressHeartbeat(
-          onProgress,
-          `refresh review summary for final HEAD on PR #${pr.number}`,
-          () =>
-            publishReviewToPullRequest({
-              execaFn,
-              repo,
-              pr,
-              summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
-              findings: [],
-              dryRun: options.dryRun,
-            }),
-        );
-      }
     }
+
+    const trackedChangesRemain = await hasTrackedWorkingTreeChanges(execaFn);
+    if (trackedChangesRemain) {
+      throw new Error("review: artifacts persistence incomplete (tracked changes remain after final timing persistence).");
+    }
+
+    if (committed && options.publish && publishCompleted) {
+      let refreshedHeadSha: string | null = null;
+      try {
+        refreshedHeadSha = await resolveCurrentHeadSha(execaFn);
+      } catch {
+        refreshedHeadSha = null;
+      }
+
+      await runWithProgressHeartbeat(
+        onProgress,
+        `refresh review summary for final HEAD on PR #${pr.number}`,
+        () =>
+          publishReviewToPullRequest({
+            execaFn,
+            repo,
+            pr,
+            summaryBody: buildReviewSummaryBody(summaryForArtifacts, refreshedHeadSha, { policyKey: reviewPolicyKey }),
+            findings: [],
+            dryRun: options.dryRun,
+          }),
+      );
+    }
+  }
+
+  if (publishFailedError) {
+    throw publishFailedError;
   }
 
   const summary = buildOutcomeSummaryMarkdown({
@@ -1455,5 +1488,6 @@ export async function runReviewCommand(
     skippedPasses: executionPolicy.skippedPasses,
     agentInvocationRetryBudget: executionPolicy.agentInvocationRetryBudget,
     phaseTimings,
+    phaseTimingDeltas,
   };
 }
