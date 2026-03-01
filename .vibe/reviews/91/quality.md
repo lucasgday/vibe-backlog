@@ -37,3 +37,15 @@ Commands:
 
 Untested:
 - Real network/API failure variants beyond mocked `gh api` publish error.
+
+## Run 2026-03-01T22:49:15.307Z
+- run_id: issue-91-review-pass-2
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+One low-severity test coverage gap remains for timing history retention bounds.
+
+### Findings
+- [P3] Missing regression test for phase timing history retention cap (tests/cli-review.test.ts:1738)

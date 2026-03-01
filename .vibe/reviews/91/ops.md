@@ -22,3 +22,15 @@ Found 1 operational docs/contract follow-up.
 Ops/release update:
 - Added explicit README contract notes for review timing fields (`phase_timings_ms`, `phase_timings_delta_ms`, `phase_timings_ms_history`).
 - Verified deterministic failure behavior: publish errors no longer skip artifact commit/push in autopush mode.
+
+## Run 2026-03-01T22:49:15.308Z
+- run_id: issue-91-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operational/docs alignment is improved; README now documents new review metric fields and artifact compatibility expectations.
+
+### Findings
+- none

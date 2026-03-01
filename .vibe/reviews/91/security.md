@@ -28,3 +28,15 @@ Checks and mitigations:
 - Publish failures are still surfaced (command exits non-zero) after persistence, so operator visibility is preserved.
 - No new credentials/network pathways added; only control-flow ordering changed.
 - Delta metrics are derived from existing numeric timing fields; no sensitive payload expansion introduced.
+
+## Run 2026-03-01T22:49:15.306Z
+- run_id: issue-91-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new security issues identified in this diff; changes do not expand command or secret-handling surfaces.
+
+### Findings
+- none
