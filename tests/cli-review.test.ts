@@ -209,6 +209,56 @@ describe.sequential("cli review", () => {
     expect(logs.some((line) => line.includes("review: issue=#42"))).toBe(true);
   });
 
+  it("prints rationale signal debug JSON when requested", async () => {
+    process.env.VIBE_REVIEW_AGENT_CMD = "cat";
+
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { stdout: "feature/no-issue\n" };
+      if (cmd === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123def\n" };
+      if (cmd === "git" && args.join(" ") === "rev-parse --verify --quiet origin/main") return { stdout: "base-sha\n" };
+      if (cmd === "git" && args.join(" ") === "rev-parse --verify --quiet feature/no-issue") return { stdout: "head-sha\n" };
+      if (cmd === "git" && args.join(" ") === "diff --name-only origin/main...feature/no-issue") {
+        return { stdout: "src/cli-program.ts\nsrc/core/pr-rationale.ts\n" };
+      }
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "issue override",
+            url: "https://example.test/issues/42",
+            milestone: null,
+            labels: [{ name: "module:cli" }],
+          }),
+        };
+      }
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") return { stdout: "acme/demo\n" };
+      if (cmd === "zsh") return { stdout: buildAgentOutput({ runId: "run-rationale-signals", findingsCount: 0 }) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "review", "--dry-run", "--issue", "42", "--no-publish", "--rationale-signals-json"]);
+
+    expect(process.exitCode).toBeUndefined();
+    const debugLine = logs.find((line) => line.startsWith("review: rationale_signals_json="));
+    expect(debugLine).toBeTruthy();
+    const json = JSON.parse(String(debugLine).slice("review: rationale_signals_json=".length)) as {
+      issue_id: number;
+      profile: string;
+      modules: string[];
+      fallback_reasons: Array<{ code: string }>;
+    };
+    expect(json.issue_id).toBe(42);
+    expect(json.profile).toBe("code-only");
+    expect(json.modules).toEqual(expect.arrayContaining(["cli", "pr"]));
+    expect(json.fallback_reasons).toContainEqual(expect.objectContaining({ code: "review-signals-unavailable" }));
+  });
+
   it("emits progress logs during long review phases", async () => {
     process.env.VIBE_REVIEW_AGENT_CMD = "cat";
 

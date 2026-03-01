@@ -1,7 +1,14 @@
 import { execa } from "execa";
 import { readTurnContext, validateTurnContext } from "./turn";
 import { runGhWithRetry } from "./gh-retry";
-import { autofillRationaleSections, buildBodyWithRationale, hasRationaleTodoPlaceholders } from "./pr-rationale";
+import {
+  autofillRationaleSections,
+  buildBodyWithRationale,
+  buildRationaleSignalDebug,
+  hasRationaleTodoPlaceholders,
+  type RationaleContext,
+  type RationaleSignalDebug,
+} from "./pr-rationale";
 import { listChangedFilesForRationale } from "./git-changed-files";
 
 type ExecaFn = typeof execa;
@@ -49,6 +56,7 @@ export type PrOpenResult = {
   body: string;
   title: string;
   rationaleAutofilled: boolean;
+  rationaleSignals: RationaleSignalDebug;
 };
 
 function parseJsonArray(stdout: string, context: string): JsonRecord[] {
@@ -205,6 +213,17 @@ export function buildPrOpenBodyTemplate(params: {
   issueBody?: string | null;
   changedFiles?: string[];
 }): string {
+  const rationaleContext: RationaleContext = {
+    issueId: params.issueId,
+    issueTitle: params.issueTitle,
+    branch: params.branch,
+    mode: "pr-open",
+    signals: {
+      issueLabels: params.issueLabels,
+      issueBody: params.issueBody,
+      changedFiles: params.changedFiles,
+    },
+  };
   const summaryLines = [`- Issue: #${params.issueId} ${params.issueTitle}`, `- Branch: \`${params.branch}\``];
   if (params.issueUrl) {
     summaryLines.push(`- Issue URL: ${params.issueUrl}`);
@@ -213,17 +232,7 @@ export function buildPrOpenBodyTemplate(params: {
   return buildBodyWithRationale({
     summaryLines,
     issueId: params.issueId,
-    context: {
-      issueId: params.issueId,
-      issueTitle: params.issueTitle,
-      branch: params.branch,
-      mode: "pr-open",
-      signals: {
-        issueLabels: params.issueLabels,
-        issueBody: params.issueBody,
-        changedFiles: params.changedFiles,
-      },
-    },
+    context: rationaleContext,
   });
 }
 
@@ -381,6 +390,17 @@ export async function runPrOpenCommand(
   const openPr = await findOpenPrByHead(execaFn, branch);
   if (openPr) {
     const issue = await fetchIssueSnapshot(execaFn, issueId);
+    const rationaleSignals = buildRationaleSignalDebug({
+      issueId,
+      issueTitle: issue.title,
+      branch,
+      mode: "pr-open",
+      signals: {
+        issueLabels: issue.labels,
+        issueBody: issue.body,
+        changedFiles,
+      },
+    });
     const title = buildPrOpenTitle(issueId, issue.title);
     const body = buildPrOpenBodyTemplate({
       issueId,
@@ -418,10 +438,22 @@ export async function runPrOpenCommand(
       title,
       body,
       rationaleAutofilled,
+      rationaleSignals,
     };
   }
 
   const issue = await fetchIssueSnapshot(execaFn, issueId);
+  const rationaleSignals = buildRationaleSignalDebug({
+    issueId,
+    issueTitle: issue.title,
+    branch,
+    mode: "pr-open",
+    signals: {
+      issueLabels: issue.labels,
+      issueBody: issue.body,
+      changedFiles,
+    },
+  });
   const created = await createPullRequest({
     execaFn,
     issueId,
@@ -448,5 +480,6 @@ export async function runPrOpenCommand(
     title: created.title,
     body: created.body,
     rationaleAutofilled: false,
+    rationaleSignals,
   };
 }

@@ -1,0 +1,12 @@
+## Run 2026-03-01T23:07:40Z
+- Scope: issue #85 rationale signal debug/json output for PR rationale generation flows.
+- Changes:
+  - Added structured rationale signal debug payload (`buildRationaleSignalDebug`) exposing profile/modules/themes/sample files and explicit `fallback_reasons` codes.
+  - Wired debug payload into `pr open` result/output (`--rationale-signals-json`).
+  - Wired optional debug payload into `review` flow/output (`--rationale-signals-json`) using rationale changed-file extraction for review PR context.
+  - Kept behavior deterministic by reusing existing normalization/classification logic.
+- Files:
+  - src/core/pr-rationale.ts
+  - src/core/pr-open.ts
+  - src/core/review.ts
+  - src/cli-program.ts

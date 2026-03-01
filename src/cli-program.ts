@@ -1422,6 +1422,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("--branch <name>", "Branch override (defaults to active turn/current branch)")
     .option("--base <name>", "Base branch override (defaults to active turn/main)")
     .option("--dry-run", "Print planned PR payload without creating PR", false)
+    .option("--rationale-signals-json", "Print rationale signal debug JSON used for PR rationale generation", false)
     .option("--skip-review-gate", "Bypass review gate and leave an audit marker on the PR", false)
     .option("--force-review", "Force review rerun even when gate markers already satisfy HEAD/policy", false)
     .action(async (opts) => {
@@ -1441,6 +1442,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           },
           execaFn,
         );
+        if (Boolean(opts.rationaleSignalsJson)) {
+          console.log(`pr open: rationale_signals_json=${JSON.stringify(result.rationaleSignals)}`);
+        }
 
         if (result.dryRun) {
           console.log(`pr open: dry-run issue=#${result.issueId} branch=${result.branch} base=${result.baseBranch}`);
@@ -1945,6 +1949,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     )
     .option("--strict", "Exit non-zero when unresolved findings remain after max attempts", false)
     .option("--followup-label <label>", "Override follow-up issue label (bug|enhancement)")
+    .option("--rationale-signals-json", "Print rationale signal debug JSON used for PR rationale generation", false)
     .action(async (opts) => {
       const followupLabelRaw = typeof opts.followupLabel === "string" ? opts.followupLabel.trim().toLowerCase() : "";
       if (followupLabelRaw && followupLabelRaw !== "bug" && followupLabelRaw !== "enhancement") {
@@ -1989,6 +1994,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
             strict: Boolean(opts.strict),
             followupLabel: followupLabelRaw ? (followupLabelRaw as "bug" | "enhancement") : null,
             computeClass,
+            rationaleSignalsJson: Boolean(opts.rationaleSignalsJson),
             flowKind: "review",
             onProgress: (message) => console.log(`review: progress: ${message}`),
           },
@@ -2016,6 +2022,9 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         console.log(`review: findings_totals_source=${result.findingTotalsSource}`);
         if (result.findingTotalsWarning) {
           console.log(`review: findings_totals_warning=${result.findingTotalsWarning}`);
+        }
+        if (Boolean(opts.rationaleSignalsJson) && result.rationaleSignals) {
+          console.log(`review: rationale_signals_json=${JSON.stringify(result.rationaleSignals)}`);
         }
         printPhaseTimings("review:", result.phaseTimings);
         printPhaseTimingDeltas("review:", result.phaseTimingDeltas);
