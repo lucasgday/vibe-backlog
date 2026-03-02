@@ -32,3 +32,15 @@ Security finding addressed by requiring explicit `--allow-remote` for non-loopba
 
 ### Findings
 - none
+
+## Run 2026-03-02T19:53:14.521Z
+- run_id: issue-16-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Non-loopback exposure is now explicitly gated behind `--allow-remote`, with safer defaults and remediation messaging; no remaining security findings in this scope.
+
+### Findings
+- none
