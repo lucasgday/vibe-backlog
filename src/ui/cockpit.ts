@@ -169,10 +169,17 @@ body {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.72rem 0.76rem;
+  min-height: 46px;
   background: rgba(255, 255, 255, 0.94);
   color: var(--ink);
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
   font-size: 0.95rem;
+}
+
+#project-selector:focus-visible {
+  outline: 3px solid rgba(12, 142, 134, 0.35);
+  outline-offset: 2px;
+  border-color: rgba(12, 142, 134, 0.9);
 }
 
 .mono-chip {
@@ -254,6 +261,23 @@ body {
   color: var(--ink-soft);
 }
 
+.turn-cta {
+  display: none;
+  margin: 0.5rem 0 0;
+  border: 1px solid rgba(12, 142, 134, 0.28);
+  border-radius: 10px;
+  background: rgba(12, 142, 134, 0.08);
+  padding: 0.55rem 0.62rem;
+  font-family: "IBM Plex Mono", "Menlo", monospace;
+  font-size: 0.76rem;
+  color: #0b655f;
+  overflow-wrap: anywhere;
+}
+
+.turn-cta.visible {
+  display: block;
+}
+
 .panel-grid {
   display: grid;
   gap: 0.8rem;
@@ -331,6 +355,7 @@ const DASHBOARD_SCRIPT = `
   const turnHint = document.getElementById("turn-hint");
   const issueValue = document.getElementById("issue-value");
   const issueHint = document.getElementById("issue-hint");
+  const turnCta = document.getElementById("turn-cta");
 
   const projects = Array.isArray(boot.projects) ? boot.projects : [];
   const selectedInitial = typeof boot.selectedProjectId === "string" ? boot.selectedProjectId : "";
@@ -340,8 +365,27 @@ const DASHBOARD_SCRIPT = `
   if (workspacePath) workspacePath.textContent = workspaceRoot || "(not set)";
   if (repoCount) repoCount.textContent = String(projects.length);
 
+  function emitMetric(eventName, payload) {
+    try {
+      const sink = window.__VIBE_COCKPIT_TELEMETRY__;
+      if (typeof sink !== "function") return;
+      sink({
+        event: eventName,
+        at: new Date().toISOString(),
+        ...payload
+      });
+    } catch {
+      // Non-blocking telemetry hook.
+    }
+  }
+
   function setText(node, value) {
     if (node) node.textContent = value;
+  }
+
+  function setTurnCtaVisible(visible) {
+    if (!turnCta) return;
+    turnCta.classList.toggle("visible", Boolean(visible));
   }
 
   function renderStatus(status) {
@@ -353,6 +397,7 @@ const DASHBOARD_SCRIPT = `
       setText(turnHint, "Select a repository.");
       setText(issueValue, "Pending link");
       setText(issueHint, "Select a repository to inspect.");
+      setTurnCtaVisible(true);
       return;
     }
 
@@ -363,6 +408,11 @@ const DASHBOARD_SCRIPT = `
     setText(turnHint, status.turn && status.turn.hint ? status.turn.hint : "");
     setText(issueValue, status.issue && status.issue.value ? status.issue.value : "Pending link");
     setText(issueHint, status.issue && status.issue.hint ? status.issue.hint : "");
+    const hasNoTurn = String(status.turn && status.turn.value ? status.turn.value : "")
+      .trim()
+      .toLowerCase()
+      .startsWith("no active turn");
+    setTurnCtaVisible(hasNoTurn);
   }
 
   async function fetchStatus(projectId) {
@@ -376,6 +426,7 @@ const DASHBOARD_SCRIPT = `
       if (!response.ok) throw new Error("status request failed");
       const data = await response.json();
       renderStatus(data);
+      emitMetric("status_loaded", { projectId });
     } catch {
       renderStatus({
         projectPath: "(request failed)",
@@ -383,6 +434,7 @@ const DASHBOARD_SCRIPT = `
         turn: { value: "No active turn", hint: "Could not load turn status." },
         issue: { value: "Pending link", hint: "Could not load issue placeholder." }
       });
+      emitMetric("status_load_failed", { projectId });
     }
   }
 
@@ -403,6 +455,7 @@ const DASHBOARD_SCRIPT = `
       }
       selector.value = selectedInitial || projects[0].id;
       selector.addEventListener("change", () => {
+        emitMetric("project_selected", { projectId: selector.value });
         void fetchStatus(selector.value);
       });
     }
@@ -610,6 +663,7 @@ function buildDashboardHtml(snapshot: CockpitProjectsSnapshot, initialStatus: Co
               <p class="status-title">Turn</p>
               <p id="turn-value" class="status-value">${safeText(initialStatus?.turn.value ?? "No active turn")}</p>
               <p id="turn-hint" class="status-hint">${safeText(initialStatus?.turn.hint ?? "Select a repository.")}</p>
+              <p id="turn-cta" class="turn-cta">Run: <code>vibe turn start --issue &lt;n&gt;</code></p>
             </article>
             <article class="status-card">
               <p class="status-title">Issue Link</p>

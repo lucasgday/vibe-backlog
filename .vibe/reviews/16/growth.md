@@ -17,3 +17,15 @@ Two product-growth opportunities are evident and should be tracked as follow-up 
 ### Findings
 - [P3] No instrumentation for selector usage or status load failures (src/ui/cockpit.ts:368)
 - [P3] Missing-turn empty state lacks a direct activation CTA (src/ui/cockpit.ts:523)
+
+## Run 2026-03-02T19:51:29Z
+- run_id: issue-16-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Growth notes implemented: lightweight telemetry hooks (`project_selected`, `status_loaded`, `status_load_failed`) and clearer missing-turn activation CTA.
+
+### Findings
+- none

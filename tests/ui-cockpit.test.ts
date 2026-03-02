@@ -12,6 +12,7 @@ function createRepoFixture(
   options: {
     withVibe?: boolean;
     turnIssueId?: number;
+    turnRaw?: string;
   } = {},
 ): string {
   const repoPath = path.join(workspaceRoot, name);
@@ -37,6 +38,11 @@ function createRepoFixture(
       ),
       "utf8",
     );
+  }
+
+  if (typeof options.turnRaw === "string") {
+    mkdirSync(path.join(repoPath, ".vibe", "runtime"), { recursive: true });
+    writeFileSync(path.join(repoPath, ".vibe", "runtime", "turn.json"), options.turnRaw, "utf8");
   }
 
   return repoPath;
@@ -72,6 +78,8 @@ describe.sequential("ui cockpit server", () => {
     expect(dashboard.body).toContain("id=\"project-selector\"");
     expect(dashboard.body).toContain("UI shell for local run/deploy workflows");
     expect(dashboard.body).toContain("@media (max-width: 920px)");
+    expect(dashboard.body).toContain("__VIBE_COCKPIT_TELEMETRY__");
+    expect(dashboard.body).toContain("id=\"turn-cta\"");
 
     const projectsResponse = await routeCockpitRequest({
       method: "GET",
@@ -123,5 +131,33 @@ describe.sequential("ui cockpit server", () => {
       workspaceRoot,
     });
     expect(missingResponse.statusCode).toBe(404);
+  });
+
+  it("returns invalid turn fallback when turn.json is malformed", async () => {
+    createRepoFixture(workspaceRoot, "gamma-repo", { withVibe: true, turnRaw: "{invalid-json" });
+
+    const projectsResponse = await routeCockpitRequest({
+      method: "GET",
+      url: "/api/projects",
+      workspaceRoot,
+    });
+    const projectsPayload = JSON.parse(projectsResponse.body) as {
+      projects: Array<{ id: string; name: string }>;
+    };
+    const gamma = projectsPayload.projects.find((project) => project.name === "gamma-repo");
+    expect(gamma).toBeDefined();
+
+    const statusResponse = await routeCockpitRequest({
+      method: "GET",
+      url: `/api/project-status?project=${encodeURIComponent(gamma!.id)}`,
+      workspaceRoot,
+    });
+    expect(statusResponse.statusCode).toBe(200);
+    const statusPayload = JSON.parse(statusResponse.body) as {
+      turn: { value: string };
+      issue: { value: string };
+    };
+    expect(statusPayload.turn.value).toBe("Invalid turn context");
+    expect(statusPayload.issue.value).toBe("Pending link");
   });
 });

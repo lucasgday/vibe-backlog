@@ -19,3 +19,15 @@ UI shell, API route structure, and CLI wiring are coherent for the MVP scope; no
 
 ### Findings
 - none
+
+## Run 2026-03-02T19:51:29Z
+- run_id: issue-16-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Applied follow-up hardening for review findings (remote-bind guard/remediation, UI accessibility tweaks, activation CTA, telemetry hooks, and additional tests). No implementation defects remain in the current diff.
+
+### Findings
+- none

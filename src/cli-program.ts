@@ -359,6 +359,23 @@ function parsePortNumber(value: unknown): number | null {
   return parsed >= 0 && parsed <= 65535 ? parsed : null;
 }
 
+function isLoopbackHost(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1") return true;
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1) === "::1";
+  }
+  return false;
+}
+
+function extractErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  if (!("code" in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : null;
+}
+
 function parseLabelNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -1963,6 +1980,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("--host <host>", "Host to bind", "127.0.0.1")
     .option("--port <n>", "Port to bind (0-65535)", "4173")
     .option("--workspace <path>", "Workspace root path", process.cwd())
+    .option("--allow-remote", "Allow non-loopback host binding", false)
     .action(async (opts) => {
       const host = typeof opts.host === "string" ? opts.host.trim() : "";
       if (!host) {
@@ -1978,11 +1996,22 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         return;
       }
 
+      const allowRemote = Boolean(opts.allowRemote);
+      if (!isLoopbackHost(host) && !allowRemote) {
+        console.error(`ui serve: host '${host}' is non-loopback and can expose local metadata to your network.`);
+        console.error("ui serve: use --allow-remote to confirm intentional remote binding, or bind to 127.0.0.1.");
+        process.exitCode = 1;
+        return;
+      }
+
       const workspaceRoot =
         typeof opts.workspace === "string" && opts.workspace.trim() ? opts.workspace.trim() : process.cwd();
 
       try {
         const handle = await startCockpitServer({ host, port, workspaceRoot });
+        if (!isLoopbackHost(host)) {
+          console.log("ui: remote binding enabled (--allow-remote).");
+        }
         console.log(`ui: serving local cockpit at ${handle.url}`);
         console.log(`ui: workspace root ${handle.workspaceRoot}`);
         console.log("ui: press Ctrl+C to stop.");
@@ -2009,7 +2038,20 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         });
       } catch (error) {
         console.error("ui serve: ERROR");
-        console.error(error);
+        if (error instanceof Error && error.message) {
+          console.error(error.message);
+        } else {
+          console.error(error);
+        }
+
+        const errorCode = extractErrorCode(error);
+        if (errorCode === "EADDRINUSE") {
+          console.error("ui serve remediation: selected port is already in use.");
+          console.error("ui serve remediation: retry with --port <open-port> (for example 4174).");
+        } else if (errorCode === "EACCES" || errorCode === "EPERM") {
+          console.error("ui serve remediation: current environment denied binding this address/port.");
+          console.error("ui serve remediation: retry with --host 127.0.0.1 --port 4173.");
+        }
         process.exitCode = 1;
       }
     });

@@ -20,3 +20,15 @@ One security-relevant hardening gap was found around optional non-loopback expos
 
 ### Findings
 - [P2] Remote host binding can expose local repo metadata without explicit warning or guard (src/cli-program.ts:1985)
+
+## Run 2026-03-02T19:51:29Z
+- run_id: issue-16-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Security finding addressed by requiring explicit `--allow-remote` for non-loopback binds and adding clear operator warnings/remediation output.
+
+### Findings
+- none

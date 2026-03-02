@@ -17,3 +17,15 @@ Operational behavior is mostly safe; one DX/reliability hardening item is recomm
 
 ### Findings
 - [P2] Startup failure path lacks actionable remediation for common bind errors (src/cli-program.ts:2010)
+
+## Run 2026-03-02T19:51:29Z
+- run_id: issue-16-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Ops finding addressed by adding actionable bind-failure remediation guidance for `EADDRINUSE` and `EACCES/EPERM` startup errors.
+
+### Findings
+- none
