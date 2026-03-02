@@ -27,3 +27,15 @@ No blockers from growth perspective; new field is a useful signal with clear fut
 
 ### Findings
 - [P2] Adoption metric is not directly measurable with current status mapping (src/core/init.ts:503)
+
+## Run 2026-03-02T12:57:45.984Z
+- run_id: issue-97-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No growth blockers found. The updated status semantics now support clearer activation/adoption instrumentation for README workflow scaffold behavior.
+
+### Findings
+- none

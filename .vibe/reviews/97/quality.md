@@ -37,3 +37,15 @@ Quality coverage is sufficient for this scope; core and edge status paths are ex
 
 ### Findings
 - [P3] Missing JSON status assertion for end-only marker repair path (tests/cli-update.test.ts:458)
+
+## Run 2026-03-02T12:57:45.983Z
+- run_id: issue-97-review-pass-2
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No quality findings. Coverage now includes JSON assertions for created/updated/unchanged/repaired paths, including malformed end-marker repair behavior.
+
+### Findings
+- none
