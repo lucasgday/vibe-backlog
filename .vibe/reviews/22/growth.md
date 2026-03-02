@@ -33,3 +33,15 @@ The fix improves trust in scaffold updates by avoiding unintended README rewrite
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:35:21.612Z
+- run_id: issue-22-pr-96-attempt-1-codex-review
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The feature likely improves onboarding, but impact cannot currently be measured.
+
+### Findings
+- [P3] No measurable activation signal for README workflow scaffold adoption (src/core/init.ts:447)

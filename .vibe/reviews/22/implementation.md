@@ -33,3 +33,15 @@ The follow-up change addresses the reported boundary-detection bug by switching 
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:35:21.609Z
+- run_id: issue-22-pr-96-attempt-1-codex-review
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+One defect found in README managed-block recovery logic during scaffold updates.
+
+### Findings
+- [P2] Partial README workflow markers are silently ignored while scaffold metadata still advances (src/core/init.ts:467)

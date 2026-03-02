@@ -41,3 +41,15 @@ A regression test was added to cover inline marker mentions and confirm managed 
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:35:21.610Z
+- run_id: issue-22-pr-96-attempt-1-codex-review
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+Coverage is good for happy-path/idempotency, but a key malformed-marker regression case is not tested.
+
+### Findings
+- [P2] Missing regression test for one-sided workflow marker corruption (tests/cli-update.test.ts:254)
