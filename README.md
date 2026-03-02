@@ -10,6 +10,33 @@ This project has two usage modes:
 
 Do not rely only on the global bin path. Always keep the canonical path available.
 
+## Quickstart (5 min)
+
+Fastest path to first success in another repo:
+
+```bash
+# in vibe-backlog repo
+pnpm install
+pnpm build
+pnpm link --global
+hash -r
+
+# in your target repo
+cd /path/to/another-repo
+vibe init --dry-run
+vibe init
+vibe preflight
+vibe postflight --apply --dry-run
+```
+
+If `gh` is unavailable in the target repo, run:
+
+```bash
+vibe init --skip-tracker
+```
+
+For phased sharing (pilot -> beta -> social) and copy/paste launch messages, see [SHARE.md](./SHARE.md).
+
 ## 0) Requirements
 
 ```bash
