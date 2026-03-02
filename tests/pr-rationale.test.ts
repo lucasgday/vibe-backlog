@@ -110,6 +110,11 @@ describe("pr rationale helpers", () => {
     expect(mixed.architecture.join("\n")).toContain("profile=`code+tests`");
     expect(mixed.why.join("\n")).toContain("Mixed code+tests changes");
     expect(cli.why.join("\n")).not.toContain("themes=pr, tracker");
+    expect(cli.why.join("\n")).not.toContain("boilerplate rationale block");
+    expect(cli.alternatives.join("\n")).not.toContain("Keep one fixed rationale bullet set for every PR");
+    expect(cli.why.join("\n")).toContain("profile=`code-only`");
+    expect(cli.alternatives.join("\n")).toContain("profile=`code-only`");
+    expect(cli.why.join("\n")).toContain("evidence=`src/core/pr-open.ts`, `src/core/pr-rationale.ts`");
 
     expect(cli.why.join("\n")).not.toBe(docs.why.join("\n"));
     expect(cli.why.join("\n")).not.toBe(mixed.why.join("\n"));
@@ -235,6 +240,8 @@ describe("pr rationale helpers", () => {
     expect(sections.architecture.join("\n")).not.toContain("documentation-only");
     expect(sections.why.join("\n")).toContain("dependency-only diff");
     expect(sections.alternatives.join("\n")).toContain("dependency-only updates");
+    expect(sections.why.join("\n")).toContain("evidence=`package.json`, `pnpm-lock.yaml`");
+    expect(sections.alternatives.join("\n")).toContain("profile=`deps-only`");
     expect(debug.profile).toBe("deps-only");
     expect(debug.modules).toEqual(expect.arrayContaining(["cli", "deps"]));
     expect(debug.changed_files_count).toBe(2);
