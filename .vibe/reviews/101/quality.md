@@ -26,3 +26,15 @@ Quality coverage is sufficient for the misclassification regression and determin
 
 ### Findings
 - none
+
+## Run 2026-03-02T17:29:48.498Z
+- run_id: issue-101-review-pass-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No quality findings; regression coverage was added for `.vibe` noise filtering and `deps-only` classification, and validation commands are passing.
+
+### Findings
+- none

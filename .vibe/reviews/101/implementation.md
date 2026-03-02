@@ -20,3 +20,15 @@ No implementation defects identified; fix directly addresses the observed miscla
 
 ### Findings
 - none
+
+## Run 2026-03-02T17:29:48.496Z
+- run_id: issue-101-review-pass-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No implementation defects found; the fix correctly filters generated `.vibe` artifacts from rationale signals and introduces dependency-aware profiling for dependency-only diffs.
+
+### Findings
+- none
