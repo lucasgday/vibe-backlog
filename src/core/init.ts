@@ -43,11 +43,14 @@ export type VibeScaffoldDiffPreview = {
   preview: string;
 };
 
+export type ReadmeWorkflowStatus = "created" | "updated" | "unchanged" | "repaired";
+
 export type VibeScaffoldUpdateResult = InitScaffoldResult & {
   check: VibeScaffoldCheckResult;
   dryRun: boolean;
   applied: boolean;
   previews: VibeScaffoldDiffPreview[];
+  readme_workflow_status: ReadmeWorkflowStatus;
 };
 
 type VibeScaffoldUpdateOptions = {
@@ -475,7 +478,7 @@ async function upsertReadmeWorkflowSection(
   dryRun: boolean,
   result: InitScaffoldResult,
   previews?: VibeScaffoldDiffPreview[],
-): Promise<void> {
+): Promise<ReadmeWorkflowStatus> {
   const workflowBlock = buildReadmeWorkflowBlock();
   const readmeExists = await pathExists(readmePath);
 
@@ -485,7 +488,7 @@ async function upsertReadmeWorkflowSection(
     }
     pushChange(result, "created", readmePath);
     recordPreview(previews, readmePath, null, workflowBlock);
-    return;
+    return "created";
   }
 
   const current = await readFile(readmePath, "utf8");
@@ -493,13 +496,16 @@ async function upsertReadmeWorkflowSection(
   const end = findStandaloneMarkerIndex(current, README_WORKFLOW_END);
 
   let next = current;
+  let status: ReadmeWorkflowStatus = "updated";
   if (start >= 0 && end > start) {
     const endWithMarker = end + README_WORKFLOW_END.length;
     next = `${current.slice(0, start)}${workflowBlock}${current.slice(endWithMarker)}`;
   } else if (start < 0 && end < 0) {
+    status = "created";
     const separator = current.endsWith("\n") ? "\n" : "\n\n";
     next = `${current}${separator}${workflowBlock}`;
   } else {
+    status = "repaired";
     let repairedBase = current;
     if (start >= 0 && end < 0) {
       // Start marker without end marker: treat trailing region as corrupted managed block.
@@ -515,7 +521,7 @@ async function upsertReadmeWorkflowSection(
 
   if (next === current) {
     pushChange(result, "unchanged", readmePath);
-    return;
+    return "unchanged";
   }
 
   if (!dryRun) {
@@ -523,6 +529,7 @@ async function upsertReadmeWorkflowSection(
   }
   pushChange(result, "updated", readmePath);
   recordPreview(previews, readmePath, current, next);
+  return status;
 }
 
 async function upsertGitignoreEntries(
@@ -676,6 +683,7 @@ export async function applyVibeScaffoldUpdate(options: VibeScaffoldUpdateOptions
     created: [],
     updated: [],
     unchanged: [],
+    readme_workflow_status: "unchanged",
   };
 
   if (check.status === "not-initialized" || !check.updateAvailable) {
@@ -702,7 +710,12 @@ export async function applyVibeScaffoldUpdate(options: VibeScaffoldUpdateOptions
     result.previews,
   );
   await upsertAgentSnippet(path.join(cwd, "AGENTS.md"), dryRun, result, result.previews);
-  await upsertReadmeWorkflowSection(path.join(cwd, "README.md"), dryRun, result, result.previews);
+  result.readme_workflow_status = await upsertReadmeWorkflowSection(
+    path.join(cwd, "README.md"),
+    dryRun,
+    result,
+    result.previews,
+  );
   await upsertGitignoreEntries(path.join(cwd, ".gitignore"), dryRun, result, result.previews);
 
   result.applied = !dryRun;

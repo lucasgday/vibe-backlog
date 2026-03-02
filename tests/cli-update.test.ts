@@ -252,6 +252,161 @@ describe.sequential("cli update flows", () => {
     expect(payload.status).toBe("not-initialized");
   });
 
+  it("reports readme_workflow_status=created in update --json when README is created", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+    unlinkSync(metadataPath);
+    unlinkSync(readmePath);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+
+    expect(payload.kind).toBe("scaffold-update");
+    expect(payload.readme_workflow_status).toBe("created");
+    expect(readFileSync(readmePath, "utf8")).toContain("<!-- vibe:workflow-docs:start -->");
+  });
+
+  it("reports readme_workflow_status=created in update --json when README block is inserted for the first time", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+    unlinkSync(metadataPath);
+    writeFileSync(readmePath, "# Demo repo\n\nManual text only.\n", "utf8");
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+
+    expect(payload.readme_workflow_status).toBe("created");
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Manual text only.");
+    expect(readme).toContain("<!-- vibe:workflow-docs:start -->");
+  });
+
+  it("reports readme_workflow_status=updated in update --json when managed README block is refreshed", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "stale managed block",
+        "<!-- vibe:workflow-docs:end -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    const readme = readFileSync(readmePath, "utf8");
+
+    expect(payload.readme_workflow_status).toBe("updated");
+    expect(readme).toContain("Manual intro.");
+    expect(readme).not.toContain("stale managed block");
+    expect(readme).toContain("flowchart LR");
+  });
+
+  it("reports readme_workflow_status=unchanged in update --json when scaffold is already up-to-date", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    const check = payload.check as Record<string, unknown>;
+
+    expect(payload.readme_workflow_status).toBe("unchanged");
+    expect(check.updateAvailable).toBe(false);
+  });
+
+  it("reports readme_workflow_status=repaired in update --json when workflow markers are malformed", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "stale fragment",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    const readme = readFileSync(readmePath, "utf8");
+
+    expect(payload.readme_workflow_status).toBe("repaired");
+    expect(readme).not.toContain("stale fragment");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(1);
+  });
+
   it("does not treat inline marker mentions as managed workflow boundaries", async () => {
     const logs: string[] = [];
     const execaMock = vi.fn(async () => ({ stdout: "" }));
@@ -372,8 +527,9 @@ describe.sequential("cli update flows", () => {
     );
 
     logs.length = 0;
-    await program.parseAsync(["node", "vibe", "update"]);
-    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+    await program.parseAsync(["node", "vibe", "update", "--json"]);
+    const payload = JSON.parse(logs.join("\n")) as Record<string, unknown>;
+    expect(payload.readme_workflow_status).toBe("repaired");
 
     const readme = readFileSync(readmePath, "utf8");
     expect(readme).toContain("Manual intro.");

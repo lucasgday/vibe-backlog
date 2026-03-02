@@ -123,6 +123,7 @@ vibe postflight --apply
 `preflight` also performs a best-effort, non-blocking tool version check and prints an explicit `self update` command when a newer `vibe-backlog` release is available.
 `update` checks/applies `.vibe` scaffold updates with metadata tracking in `.vibe/scaffold.json`, dry-run diff preview, and marker-safe preservation of protected sections.
 `init`/`update` also scaffold a managed README workflow section (`<!-- vibe:workflow-docs:start --> ... <!-- vibe:workflow-docs:end -->`) with a Mermaid diagram, preserving non-managed README content.
+`update --json` includes `readme_workflow_status` with one of: `created` (workflow block created, including first insertion into an existing README), `updated` (existing managed block refreshed), `unchanged` (already up-to-date), `repaired` (malformed markers were repaired).
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
@@ -485,4 +486,3 @@ Workflow steps (text fallback):
 6. Apply tracker updates with `vibe postflight --apply`.
 
 <!-- vibe:workflow-docs:end -->
-
