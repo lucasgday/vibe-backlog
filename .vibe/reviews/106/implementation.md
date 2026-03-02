@@ -17,3 +17,15 @@ The diff updates managed snippet wording to `vibe` commands, but the core `init`
 
 ### Findings
 - [P1] `init` still performs tracker bootstrap by default instead of opt-in (src/cli-program.ts:1868)
+
+## Run 2026-03-02T20:57:28.634Z
+- run_id: pr-109-issue-106-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+`init` now defaults to scaffold-only and requires explicit opt-in (`--bootstrap-tracker`) for tracker bootstrap; behavior matches issue intent.
+
+### Findings
+- none

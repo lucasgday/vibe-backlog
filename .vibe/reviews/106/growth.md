@@ -14,3 +14,15 @@ The change likely reduces onboarding friction, but there is still no instrumenta
 
 ### Findings
 - [P3] No measurable signal for `init` activation vs tracker-bootstrap friction (src/cli-program.ts:1850)
+
+## Run 2026-03-02T20:57:28.636Z
+- run_id: pr-109-issue-106-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Onboarding friction for external repos is reduced by removing GH bootstrap from default init path; no regressions identified in this diff.
+
+### Findings
+- none

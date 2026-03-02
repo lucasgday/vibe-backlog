@@ -18,3 +18,15 @@ No new direct vulnerability was introduced by the text changes, but default writ
 
 ### Findings
 - [P2] Default `init` path can mutate GitHub tracker state without explicit consent (src/cli-program.ts:1853)
+
+## Run 2026-03-02T20:57:28.634Z
+- run_id: pr-109-issue-106-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Default path no longer performs unintended GitHub mutations, reducing accidental write risk and privilege exposure.
+
+### Findings
+- none

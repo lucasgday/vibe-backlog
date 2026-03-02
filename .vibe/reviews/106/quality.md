@@ -22,3 +22,15 @@ Tests were updated for snippet text, but coverage does not validate the intended
 
 ### Findings
 - [P2] Missing regression test for default no-bootstrap `init` behavior (tests/cli-init.test.ts:66)
+
+## Run 2026-03-02T20:57:28.635Z
+- run_id: pr-109-issue-106-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Regression coverage now validates default no-bootstrap behavior, explicit bootstrap path, flag-conflict handling, and updated preflight command hints.
+
+### Findings
+- none
