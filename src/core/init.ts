@@ -170,10 +170,10 @@ function buildScaffoldMetadataJson(identity: ToolIdentity): string {
 function buildAgentSnippetBlock(): string {
   const body = [
     "## Vibe Agent Workflow (Managed)",
-    "- Run `node dist/cli.cjs preflight` before implementation.",
+    "- Run `vibe preflight` before implementation.",
     "- Use one issue per topic and keep tracker labels updated.",
     "- Use semantic, repo-specific milestones (avoid fixed milestone catalogs).",
-    "- Validate with `node dist/cli.cjs postflight` and apply updates with `node dist/cli.cjs postflight --apply`.",
+    "- Validate with `vibe postflight` and apply updates with `vibe postflight --apply`.",
   ].join("\n");
 
   return `${AGENT_SNIPPET_START}\n${body}\n${AGENT_SNIPPET_END}\n`;

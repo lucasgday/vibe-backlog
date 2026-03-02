@@ -54,7 +54,10 @@ describe.sequential("cli init", () => {
     expect(readFileSync(path.join(tempDir, ".vibe", "contract.yml"), "utf8")).toContain("gitleaks:");
     expect(readFileSync(path.join(tempDir, ".vibe", "contract.yml"), "utf8")).toContain("policy: warn");
     expect(existsSync(path.join(tempDir, "AGENTS.md"))).toBe(true);
-    expect(readFileSync(path.join(tempDir, "AGENTS.md"), "utf8")).toContain("<!-- vibe:agent-snippet:start -->");
+    const agents = readFileSync(path.join(tempDir, "AGENTS.md"), "utf8");
+    expect(agents).toContain("<!-- vibe:agent-snippet:start -->");
+    expect(agents).toContain("Run `vibe preflight` before implementation.");
+    expect(agents).toContain("Validate with `vibe postflight` and apply updates with `vibe postflight --apply`.");
     expect(existsSync(path.join(tempDir, "README.md"))).toBe(true);
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("<!-- vibe:workflow-docs:start -->");
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("```mermaid");
