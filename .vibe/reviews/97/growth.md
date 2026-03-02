@@ -15,3 +15,15 @@ No blockers from growth perspective; new field is a useful signal with clear fut
 
 ### Findings
 - none
+
+## Run 2026-03-02T12:55:10.145Z
+- run_id: issue-97-review-pass-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 growth/instrumentation issue found in the current status taxonomy.
+
+### Findings
+- [P2] Adoption metric is not directly measurable with current status mapping (src/core/init.ts:503)

@@ -17,3 +17,15 @@ Operational risk is low; change is additive and regression-tested.
 
 ### Findings
 - none
+
+## Run 2026-03-02T12:55:10.145Z
+- run_id: issue-97-review-pass-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 operational/docs clarity issue found for downstream consumers.
+
+### Findings
+- [P3] README lists enum values but not their exact semantics (README.md:126)

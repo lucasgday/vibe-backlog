@@ -22,3 +22,15 @@ No implementation defects found after adding `readme_workflow_status` plumbing a
 
 ### Findings
 - none
+
+## Run 2026-03-02T12:55:10.143Z
+- run_id: issue-97-review-pass-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 behavior-level issue found in the new status mapping for README workflow updates.
+
+### Findings
+- [P2] `readme_workflow_status` conflates first-time insertion with routine refresh (src/core/init.ts:503)

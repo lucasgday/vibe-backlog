@@ -25,3 +25,15 @@ Quality coverage is sufficient for this scope; core and edge status paths are ex
 
 ### Findings
 - none
+
+## Run 2026-03-02T12:55:10.144Z
+- run_id: issue-97-review-pass-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 test coverage gap found for the new JSON status contract.
+
+### Findings
+- [P3] Missing JSON status assertion for end-only marker repair path (tests/cli-update.test.ts:458)
