@@ -210,6 +210,38 @@ describe("pr rationale helpers", () => {
     );
   });
 
+  it("filters .vibe review artifacts and classifies dependency patches as deps-only", () => {
+    const context: RationaleContext = {
+      issueId: 99,
+      issueTitle: "security(deps): patch rollup CVE-2026-27606",
+      branch: "codex/issue-99-rollup-cve-2026-27606",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["bug", "module:cli"],
+        changedFiles: [
+          ".vibe/reviews/99/implementation.md",
+          ".vibe/reviews/99/security.md",
+          ".vibe/artifacts/postflight.json",
+          "package.json",
+          "pnpm-lock.yaml",
+        ],
+      },
+    };
+
+    const sections = buildRationaleSections(context);
+    const debug = buildRationaleSignalDebug(context);
+
+    expect(sections.architecture.join("\n")).toContain("profile=`deps-only`");
+    expect(sections.architecture.join("\n")).not.toContain("documentation-only");
+    expect(sections.why.join("\n")).toContain("dependency-only diff");
+    expect(sections.alternatives.join("\n")).toContain("dependency-only updates");
+    expect(debug.profile).toBe("deps-only");
+    expect(debug.modules).toEqual(expect.arrayContaining(["cli", "deps"]));
+    expect(debug.changed_files_count).toBe(2);
+    expect(debug.changed_files_sample).toEqual(["package.json", "pnpm-lock.yaml"]);
+    expect(debug.fallback_reasons).toContainEqual(expect.objectContaining({ code: "validation-signals-unavailable" }));
+  });
+
   it("preserves user-written text outside placeholder sections during autofill", () => {
     const body = [
       "## Summary",

@@ -77,9 +77,13 @@ const RATIONALE_AUTOCLOSE_FOOTER_REGEX = /^\s*(?:fix(?:e[sd])?|close[sd]?|resolv
 const TODO_PLACEHOLDER_LINE_REGEX = /(?:^|\r?\n)\s*(?:[-*]\s+)?TODO(?:\s*:|\b)/i;
 const DOC_FILE_REGEX = /(?:^|\/)(?:README|CHANGELOG|SECURITY|CONTRIBUTING)\.md$/i;
 const MARKDOWN_FILE_REGEX = /\.md$/i;
+const DEPENDENCY_FILE_REGEX =
+  /(?:^|\/)(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|npm-shrinkwrap\.json|bun\.lockb?)$/i;
+const RATIONALE_SIGNAL_NOISE_FILE_REGEX = /^\.vibe\/(?:reviews\/.+\.md|artifacts\/postflight\.json)$/i;
 
 export type ChangeProfile =
   | "unknown"
+  | "deps-only"
   | "docs-only"
   | "tests-only"
   | "code-only"
@@ -130,6 +134,7 @@ type RationaleFacts = {
   hasDocs: boolean;
   hasTests: boolean;
   hasCode: boolean;
+  hasDeps: boolean;
   profile: ChangeProfile;
   sampleFiles: string[];
   issueThemes: string[];
@@ -199,8 +204,17 @@ function isCodeFile(file: string): boolean {
   return file.startsWith("src/") || file.startsWith("apps/") || file.startsWith("packages/");
 }
 
+function isDependencyFile(file: string): boolean {
+  return DEPENDENCY_FILE_REGEX.test(file);
+}
+
+function isRationaleSignalNoiseFile(file: string): boolean {
+  return RATIONALE_SIGNAL_NOISE_FILE_REGEX.test(file);
+}
+
 function toModuleFromFile(file: string): string | null {
   const lower = file.toLowerCase();
+  if (isDependencyFile(file)) return "deps";
   if (isDocFile(file)) return "docs";
   if (isTestFile(file)) return "tests";
   if (lower.startsWith("src/ui/") || lower.startsWith("ui/") || lower.startsWith("app/")) return "ui";
@@ -219,9 +233,16 @@ function toModuleFromFile(file: string): string | null {
   return null;
 }
 
-function classifyProfile(params: { hasDocs: boolean; hasTests: boolean; hasCode: boolean; fileCount: number }): ChangeProfile {
+function classifyProfile(params: {
+  hasDocs: boolean;
+  hasTests: boolean;
+  hasCode: boolean;
+  hasDeps: boolean;
+  fileCount: number;
+}): ChangeProfile {
   if (params.fileCount === 0) return "unknown";
-  if (params.hasDocs && !params.hasTests && !params.hasCode) return "docs-only";
+  if (params.hasDeps && !params.hasDocs && !params.hasTests && !params.hasCode) return "deps-only";
+  if (params.hasDocs && !params.hasTests && !params.hasCode && !params.hasDeps) return "docs-only";
   if (!params.hasDocs && params.hasTests && !params.hasCode) return "tests-only";
   if (!params.hasDocs && !params.hasTests && params.hasCode) return "code-only";
   if (!params.hasDocs && params.hasTests && params.hasCode) return "code+tests";
@@ -301,10 +322,11 @@ function formatSampleFiles(files: readonly string[], maxItems = 3): string {
 
 function buildFacts(context: RationaleContext): RationaleFacts {
   const labels = normalizeList(context.signals?.issueLabels);
-  const changedFiles = normalizePaths(context.signals?.changedFiles);
+  const changedFiles = normalizePaths(context.signals?.changedFiles).filter((file) => !isRationaleSignalNoiseFile(file));
   const hasDocs = changedFiles.some((file) => isDocFile(file));
   const hasTests = changedFiles.some((file) => isTestFile(file));
   const hasCode = changedFiles.some((file) => isCodeFile(file));
+  const hasDeps = changedFiles.some((file) => isDependencyFile(file));
   const labelModules = normalizeList(labels.map((label) => toModuleFromLabel(label) ?? "").filter(Boolean));
   const fileModules = normalizeList(changedFiles.map((file) => toModuleFromFile(file) ?? "").filter(Boolean));
   const modules = normalizeList([...labelModules, ...fileModules]);
@@ -320,7 +342,8 @@ function buildFacts(context: RationaleContext): RationaleFacts {
     hasDocs,
     hasTests,
     hasCode,
-    profile: classifyProfile({ hasDocs, hasTests, hasCode, fileCount: changedFiles.length }),
+    hasDeps,
+    profile: classifyProfile({ hasDocs, hasTests, hasCode, hasDeps, fileCount: changedFiles.length }),
     sampleFiles: changedFiles.slice(0, 3),
     issueThemes: detectIssueThemes(context, labels),
     validationSignals,
@@ -380,6 +403,10 @@ function buildArchitectureLines(context: RationaleContext, facts: RationaleFacts
 
   if (facts.profile === "docs-only") {
     lines.push("- Keep runtime/CLI behavior claims out of the rationale; this diff reads as documentation-only.");
+  } else if (facts.profile === "deps-only") {
+    lines.push(
+      "- Keep this rationale dependency-focused: explain advisory/version-risk reduction intent instead of inventing feature or runtime behavior changes.",
+    );
   } else if (facts.profile === "tests-only") {
     lines.push("- Frame the PR as verification-focused: explain which behavior is being locked down without implying implementation edits.");
   } else if (facts.hasCode && facts.hasTests) {
@@ -402,6 +429,10 @@ function buildWhyLines(context: RationaleContext, facts: RationaleFacts): string
 
   if (facts.profile === "docs-only") {
     lines.push("- A docs-only diff should justify wording/contract clarifications, not claim code-path risk changes that are absent from the touched files.");
+  } else if (facts.profile === "deps-only") {
+    lines.push(
+      "- A dependency-only diff should explain version/advisory intent (for example vulnerability remediation) rather than implying direct feature implementation.",
+    );
   } else if (facts.profile === "tests-only") {
     lines.push("- A tests-only diff should explain the regression or edge case being pinned so review effort stays focused on intent and coverage quality.");
   } else if (facts.hasCode && facts.hasTests) {
@@ -441,6 +472,8 @@ function buildAlternativesLines(context: RationaleContext, facts: RationaleFacts
 
   if (facts.profile === "docs-only") {
     lines.push("- Describe docs-only edits as runtime refactors: rejected because no code/test paths appear in the touched-file signal.");
+  } else if (facts.profile === "deps-only") {
+    lines.push("- Describe dependency-only updates as feature delivery work: rejected because the diff signal is package manifest/lockfile maintenance.");
   } else if (facts.profile === "tests-only") {
     lines.push("- Present test-only work as a feature implementation: rejected because the diff signal shows verification changes without runtime edits.");
   } else if (facts.hasCode && facts.hasTests) {
