@@ -35,3 +35,15 @@ The follow-up body formatter now normalizes only malformed newline markers that 
 
 ### Findings
 - none
+
+## Run 2026-03-02T22:12:31.235Z
+- run_id: pr-111-issue-110-attempt-1-rerun-standalone-n
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The /n normalization rule is now constrained to standalone malformed markers (start-of-line or whitespace-delimited), preventing accidental rewrites of embedded URL patterns while preserving intended markdown newline recovery for list/heading tokens.
+
+### Findings
+- none

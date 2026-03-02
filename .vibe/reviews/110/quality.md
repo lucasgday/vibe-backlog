@@ -35,3 +35,15 @@ Regression coverage was expanded for escaped and literal newline markers across 
 
 ### Findings
 - none
+
+## Run 2026-03-02T22:12:31.236Z
+- run_id: pr-111-issue-110-attempt-1-rerun-standalone-n
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Coverage was expanded with a regression test that verifies URL fragments containing /n# are not mutated, alongside existing normalization assertions for malformed newline markers.
+
+### Findings
+- none
