@@ -242,6 +242,18 @@ Portability note:
 - The CLI security scan is intended for any repo using `.vibe` + `vibe`.
 - This repository includes CI wiring for gitleaks; `vibe init` does not scaffold that workflow yet.
 
+CI setup/troubleshooting (gitleaks workflow):
+
+- Symptom: GitHub Actions run fails with `startup_failure` and `No jobs were run`.
+- Root cause: repository Actions policy blocks non-owner actions, so the workflow is rejected before job startup.
+- This workflow requires these external actions:
+  - `actions/checkout@v4`
+  - `pnpm/action-setup@v4`
+  - `actions/setup-node@v4`
+- Safer restricted option (recommended): in GitHub `Settings -> Actions -> General`, keep restricted policy and add the exact actions above to the allow list.
+- Simple fallback: set Actions permissions to allow all actions and reusable workflows.
+- Verification: rerun the `gitleaks` workflow and confirm job `security-scan` starts (not `No jobs were run`) and reaches `Run vibe security scan (fail policy)`.
+
 ## `vibe tracker reconcile` command reference
 
 ```bash
