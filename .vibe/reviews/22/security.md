@@ -9,3 +9,15 @@ Threat model quick scan: documentation drift and unsafe automation overwrites we
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:18:28.417Z
+- run_id: issue-22-pr-96-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new trust boundary or secret-handling paths were introduced. Marker-bounded replacement behavior limits writes to a managed section and preserves non-managed README content, reducing accidental overwrite risk.
+
+### Findings
+- none

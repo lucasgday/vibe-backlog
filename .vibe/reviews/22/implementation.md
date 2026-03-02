@@ -9,3 +9,15 @@ Added a managed README workflow scaffold block for `.vibe` repos using determini
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:18:28.416Z
+- run_id: issue-22-pr-96-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The change implements a managed README Mermaid workflow block for `.vibe` repos with explicit markers, hooks it into both `vibe init` and `vibe update`, and bumps scaffold template version to deliver the feature to existing repos via update flow.
+
+### Findings
+- none
