@@ -23,3 +23,15 @@ The fix improves external-repo experience, but there is no measurement signal to
 
 ### Findings
 - [P3] No instrumentation for malformed follow-up summary normalization (src/core/review-pr.ts:888)
+
+## Run 2026-03-02T21:59:22.713Z
+- run_id: pr-111-issue-110-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The conditional `vibe:followup-summary-normalized:newlines` marker creates a concrete signal that can be used to quantify malformed-summary incidence in follow-up issues without changing user flow.
+
+### Findings
+- none
