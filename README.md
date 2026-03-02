@@ -125,6 +125,7 @@ vibe postflight --apply
 `init`/`update` also scaffold a managed README workflow section (`<!-- vibe:workflow-docs:start --> ... <!-- vibe:workflow-docs:end -->`) with a Mermaid diagram, preserving non-managed README content.
 `update --json` includes `readme_workflow_status` with one of: `created` (workflow block created, including first insertion into an existing README), `updated` (existing managed block refreshed), `unchanged` (already up-to-date), `repaired` (malformed markers were repaired).
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
+`ui serve` boots a local cockpit shell with workspace project selector + baseline branch/turn/issue cards (`node dist/cli.cjs ui serve --workspace <path>`).
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
 `postflight --apply` now runs automatic local branch cleanup for `upstream gone` branches (safe delete for merged, force delete for patch-equivalent, non-merged require explicit manual confirmation). Use `--skip-branch-cleanup` to bypass it.
@@ -205,6 +206,7 @@ node dist/cli.cjs tracker bootstrap --dry-run
 node dist/cli.cjs tracker bootstrap
 node dist/cli.cjs tracker reconcile --dry-run
 node dist/cli.cjs tracker reconcile --fallback-module module:core --fallback-milestone "<milestone>"
+node dist/cli.cjs ui serve --workspace /path/to/projects
 node dist/cli.cjs postflight
 node dist/cli.cjs postflight --apply --dry-run
 node dist/cli.cjs postflight --apply
