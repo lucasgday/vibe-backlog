@@ -5,3 +5,15 @@
   - replaced `node dist/cli.cjs postflight`/`--apply` with `vibe postflight`/`--apply`
 - This avoids false assumptions that every target repo has local `dist/cli.cjs`.
 - Updated CLI tests to assert the new snippet contract (`tests/cli-init.test.ts`, `tests/cli-update.test.ts`).
+
+## Run 2026-03-02T20:54:10.191Z
+- run_id: pr-109-issue-106-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+The diff updates managed snippet wording to `vibe` commands, but the core `init` flow still runs tracker bootstrap by default, so the opt-in behavior in issue #106 is not implemented.
+
+### Findings
+- [P1] `init` still performs tracker bootstrap by default instead of opt-in (src/cli-program.ts:1868)
