@@ -361,9 +361,14 @@ describe("review PR helpers", () => {
         expect(bodyFilePath.length).toBeGreaterThan(0);
         const bodyFromFile = readFileSync(bodyFilePath, "utf8");
         expect(bodyFromFile).toContain("## Review Summary");
-        expect(bodyFromFile).toContain("## vibe review\n- Attempts: 1/1\n- Unresolved findings: 1");
+        expect(bodyFromFile).toContain("<!-- vibe:followup-summary-normalized:newlines -->");
+        expect(bodyFromFile).toContain("## vibe review\n- Attempts: 1/1\n1. step one\n## Notes\n- Unresolved findings: 1");
         expect(bodyFromFile).not.toContain("/n-");
+        expect(bodyFromFile).not.toContain("/n1.");
+        expect(bodyFromFile).not.toContain("/n##");
         expect(bodyFromFile).not.toContain("\\n-");
+        expect(bodyFromFile).not.toContain("\\n1.");
+        expect(bodyFromFile).not.toContain("\\n##");
         return { stdout: "https://example.test/issues/505\n" };
       }
       throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
@@ -374,7 +379,7 @@ describe("review PR helpers", () => {
       sourceIssueId: 34,
       sourceIssueTitle: "review command",
       findings: [sampleFinding({ kind: "defect", severity: "P1" })],
-      reviewSummary: "## vibe review/n- Attempts: 1/1\\n- Unresolved findings: 1",
+      reviewSummary: "## vibe review/n- Attempts: 1/1\\n1. step one/n## Notes\\n- Unresolved findings: 1",
       milestoneTitle: null,
       dryRun: false,
       overrideLabel: null,
