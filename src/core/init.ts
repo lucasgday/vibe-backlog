@@ -194,6 +194,15 @@ function buildReadmeWorkflowBlock(): string {
     '    G --> H["tracker synced"]',
     "```",
     "",
+    "Workflow steps (text fallback):",
+    "",
+    "1. Run `vibe preflight`.",
+    "2. Pick one issue and keep scope focused.",
+    "3. Implement and run tests/build.",
+    "4. Validate `vibe postflight`.",
+    "5. Preview tracker changes with `vibe postflight --apply --dry-run`.",
+    "6. Apply tracker updates with `vibe postflight --apply`.",
+    "",
     README_WORKFLOW_END,
     "",
   ].join("\n");
@@ -296,6 +305,23 @@ function findStandaloneMarkerIndex(content: string, markerText: string, fromInde
   }
 
   return -1;
+}
+
+function stripStandaloneMarkerLines(content: string, markerText: string): string {
+  let next = content;
+
+  while (true) {
+    const markerIndex = findStandaloneMarkerIndex(next, markerText);
+    if (markerIndex < 0) break;
+
+    const lineStart = next.lastIndexOf("\n", markerIndex - 1);
+    const lineEnd = next.indexOf("\n", markerIndex + markerText.length);
+    const removeStart = lineStart < 0 ? 0 : lineStart + 1;
+    const removeEnd = lineEnd < 0 ? next.length : lineEnd + 1;
+    next = `${next.slice(0, removeStart)}${next.slice(removeEnd)}`;
+  }
+
+  return next;
 }
 
 function findMarkedSectionRange(content: string, marker: ProtectedSectionMarker): { start: number; end: number } | null {
@@ -464,15 +490,27 @@ async function upsertReadmeWorkflowSection(
 
   const current = await readFile(readmePath, "utf8");
   const start = findStandaloneMarkerIndex(current, README_WORKFLOW_START);
-  const end = start >= 0 ? findStandaloneMarkerIndex(current, README_WORKFLOW_END, start + README_WORKFLOW_START.length) : -1;
+  const end = findStandaloneMarkerIndex(current, README_WORKFLOW_END);
 
   let next = current;
   if (start >= 0 && end > start) {
     const endWithMarker = end + README_WORKFLOW_END.length;
     next = `${current.slice(0, start)}${workflowBlock}${current.slice(endWithMarker)}`;
-  } else if (start < 0) {
+  } else if (start < 0 && end < 0) {
     const separator = current.endsWith("\n") ? "\n" : "\n\n";
     next = `${current}${separator}${workflowBlock}`;
+  } else {
+    let repairedBase = current;
+    if (start >= 0 && end < 0) {
+      // Start marker without end marker: treat trailing region as corrupted managed block.
+      repairedBase = current.slice(0, start).trimEnd();
+    } else {
+      repairedBase = stripStandaloneMarkerLines(repairedBase, README_WORKFLOW_START);
+      repairedBase = stripStandaloneMarkerLines(repairedBase, README_WORKFLOW_END);
+      repairedBase = repairedBase.trimEnd();
+    }
+    const separator = repairedBase.endsWith("\n") ? "\n" : "\n\n";
+    next = `${repairedBase}${separator}${workflowBlock}`;
   }
 
   if (next === current) {

@@ -210,6 +210,7 @@ describe.sequential("cli update flows", () => {
     expect(readmeAfterApply).toContain("Manual footer.");
     expect(readmeAfterApply).toContain("<!-- vibe:workflow-docs:start -->");
     expect(readmeAfterApply).toContain("flowchart LR");
+    expect(readmeAfterApply).toContain("Workflow steps (text fallback):");
     expect(readmeAfterApply).not.toContain("old workflow block");
 
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
@@ -288,6 +289,105 @@ describe.sequential("cli update flows", () => {
     expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(2);
     expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(2);
     expect(readme).toContain("flowchart LR");
+  });
+
+  it("repairs start-only workflow marker corruption before marking scaffold up-to-date", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "stale workflow fragment",
+        "legacy block line",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Manual intro.");
+    expect(readme).not.toContain("stale workflow fragment");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(1);
+    expect(readme).toContain("flowchart LR");
+
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
+    expect(metadata.scaffold_template_version).toBe(3);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--check"]);
+    expect(logs.some((line) => line.includes("scaffold update: up-to-date"))).toBe(true);
+  });
+
+  it("repairs end-only workflow marker corruption before marking scaffold up-to-date", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "Manual footer.",
+        "<!-- vibe:workflow-docs:end -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Manual intro.");
+    expect(readme).toContain("Manual footer.");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(1);
+    expect(readme).toContain("flowchart LR");
+
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
+    expect(metadata.scaffold_template_version).toBe(3);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--check"]);
+    expect(logs.some((line) => line.includes("scaffold update: up-to-date"))).toBe(true);
   });
 });
 

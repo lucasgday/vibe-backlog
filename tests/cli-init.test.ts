@@ -58,6 +58,7 @@ describe.sequential("cli init", () => {
     expect(existsSync(path.join(tempDir, "README.md"))).toBe(true);
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("<!-- vibe:workflow-docs:start -->");
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("```mermaid");
+    expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("Workflow steps (text fallback):");
     expect(readFileSync(path.join(tempDir, ".gitignore"), "utf8")).toContain(".vibe/runtime");
     expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(true);
 
