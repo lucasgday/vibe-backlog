@@ -458,3 +458,21 @@ Rules:
   1. reply comment (`addPullRequestReviewThreadReply`)
   2. resolve mutation (`resolveReviewThread`)
 - Auto-body (when `--body` is not provided) includes: PR, HEAD, thread id, outdated status, location, finding title/severity/pass and fingerprint when available.
+
+<!-- vibe:workflow-docs:start -->
+## Vibe Workflow (Managed)
+
+This section is managed by `vibe init` / `vibe update`.
+
+```mermaid
+flowchart LR
+    A["preflight"] --> B["pick issue"]
+    B --> C["implement + tests"]
+    C --> D["postflight"]
+    D --> E{"apply updates?"}
+    E -- "dry-run" --> F["postflight --apply --dry-run"]
+    E -- "yes" --> G["postflight --apply"]
+    G --> H["tracker synced"]
+```
+
+<!-- vibe:workflow-docs:end -->
