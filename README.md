@@ -475,4 +475,14 @@ flowchart LR
     G --> H["tracker synced"]
 ```
 
+Workflow steps (text fallback):
+
+1. Run `vibe preflight`.
+2. Pick one issue and keep scope focused.
+3. Implement and run tests/build.
+4. Validate `vibe postflight`.
+5. Preview tracker changes with `vibe postflight --apply --dry-run`.
+6. Apply tracker updates with `vibe postflight --apply`.
+
 <!-- vibe:workflow-docs:end -->
+
