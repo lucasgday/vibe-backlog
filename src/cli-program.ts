@@ -44,6 +44,7 @@ import {
   type SecurityScanResult,
 } from "./core/security-scan";
 import { checkToolUpdate, runToolSelfUpdate } from "./core/update";
+import { startCockpitServer, stopCockpitServer } from "./ui/cockpit";
 
 type ExecaFn = typeof execa;
 const GUARD_NO_ACTIVE_TURN_EXIT_CODE = 2;
@@ -342,6 +343,37 @@ function parseNullableString(value: unknown): string | null {
 
 function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function parsePortNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) return null;
+    return value >= 0 && value <= 65535 ? value : null;
+  }
+
+  if (typeof value !== "string") return null;
+  if (!/^[0-9]+$/.test(value.trim())) return null;
+
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed)) return null;
+  return parsed >= 0 && parsed <= 65535 ? parsed : null;
+}
+
+function isLoopbackHost(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1") return true;
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1) === "::1";
+  }
+  return false;
+}
+
+function extractErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  if (!("code" in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : null;
 }
 
 function parseLabelNames(value: unknown): string[] {
@@ -1937,6 +1969,90 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         } catch {
           console.log("\nBranch PRs: unavailable");
         }
+      }
+    });
+
+  const ui = program.command("ui").description("Local cockpit web UI");
+
+  ui
+    .command("serve")
+    .description("Start dashboard shell with workspace project selector")
+    .option("--host <host>", "Host to bind", "127.0.0.1")
+    .option("--port <n>", "Port to bind (0-65535)", "4173")
+    .option("--workspace <path>", "Workspace root path", process.cwd())
+    .option("--allow-remote", "Allow non-loopback host binding", false)
+    .action(async (opts) => {
+      const host = typeof opts.host === "string" ? opts.host.trim() : "";
+      if (!host) {
+        console.error("ui serve: --host cannot be empty.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const port = parsePortNumber(opts.port);
+      if (port === null) {
+        console.error("ui serve: --port must be an integer between 0 and 65535.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const allowRemote = Boolean(opts.allowRemote);
+      if (!isLoopbackHost(host) && !allowRemote) {
+        console.error(`ui serve: host '${host}' is non-loopback and can expose local metadata to your network.`);
+        console.error("ui serve: use --allow-remote to confirm intentional remote binding, or bind to 127.0.0.1.");
+        process.exitCode = 1;
+        return;
+      }
+
+      const workspaceRoot =
+        typeof opts.workspace === "string" && opts.workspace.trim() ? opts.workspace.trim() : process.cwd();
+
+      try {
+        const handle = await startCockpitServer({ host, port, workspaceRoot });
+        if (!isLoopbackHost(host)) {
+          console.log("ui: remote binding enabled (--allow-remote).");
+        }
+        console.log(`ui: serving local cockpit at ${handle.url}`);
+        console.log(`ui: workspace root ${handle.workspaceRoot}`);
+        console.log("ui: press Ctrl+C to stop.");
+
+        let shuttingDown = false;
+        const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          console.log(`\nui: received ${signal}; shutting down.`);
+          try {
+            await stopCockpitServer(handle);
+          } catch (error) {
+            console.error("ui: shutdown warning");
+            console.error(error);
+          }
+          process.exit(0);
+        };
+
+        process.once("SIGINT", () => {
+          void shutdown("SIGINT");
+        });
+        process.once("SIGTERM", () => {
+          void shutdown("SIGTERM");
+        });
+      } catch (error) {
+        console.error("ui serve: ERROR");
+        if (error instanceof Error && error.message) {
+          console.error(error.message);
+        } else {
+          console.error(error);
+        }
+
+        const errorCode = extractErrorCode(error);
+        if (errorCode === "EADDRINUSE") {
+          console.error("ui serve remediation: selected port is already in use.");
+          console.error("ui serve remediation: retry with --port <open-port> (for example 4174).");
+        } else if (errorCode === "EACCES" || errorCode === "EPERM") {
+          console.error("ui serve remediation: current environment denied binding this address/port.");
+          console.error("ui serve remediation: retry with --host 127.0.0.1 --port 4173.");
+        }
+        process.exitCode = 1;
       }
     });
 
