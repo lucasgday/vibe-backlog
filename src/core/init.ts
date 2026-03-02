@@ -501,6 +501,7 @@ async function upsertReadmeWorkflowSection(
     const endWithMarker = end + README_WORKFLOW_END.length;
     next = `${current.slice(0, start)}${workflowBlock}${current.slice(endWithMarker)}`;
   } else if (start < 0 && end < 0) {
+    status = "created";
     const separator = current.endsWith("\n") ? "\n" : "\n\n";
     next = `${current}${separator}${workflowBlock}`;
   } else {
