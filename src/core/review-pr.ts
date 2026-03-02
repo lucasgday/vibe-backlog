@@ -889,7 +889,7 @@ function normalizeFollowUpSummaryNewlines(summary: string): string {
   return summary
     .replace(/\r\n/g, "\n")
     .replace(/\\n(?=\s*(?:[-*#]|\d+\.))/g, "\n")
-    .replace(/\/n(?=\s*(?:[-*#]|\d+\.))/g, "\n");
+    .replace(/(?:^|[ \t]+)\/n(?=\s*(?:[-*#]|\d+\.))/gm, "\n");
 }
 
 export function classifyFollowUpLabel(
