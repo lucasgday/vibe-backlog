@@ -463,14 +463,14 @@ async function upsertReadmeWorkflowSection(
   }
 
   const current = await readFile(readmePath, "utf8");
-  const start = current.indexOf(README_WORKFLOW_START);
-  const end = current.indexOf(README_WORKFLOW_END);
+  const start = findStandaloneMarkerIndex(current, README_WORKFLOW_START);
+  const end = start >= 0 ? findStandaloneMarkerIndex(current, README_WORKFLOW_END, start + README_WORKFLOW_START.length) : -1;
 
   let next = current;
   if (start >= 0 && end > start) {
     const endWithMarker = end + README_WORKFLOW_END.length;
     next = `${current.slice(0, start)}${workflowBlock}${current.slice(endWithMarker)}`;
-  } else if (!current.includes(README_WORKFLOW_START)) {
+  } else if (start < 0) {
     const separator = current.endsWith("\n") ? "\n" : "\n\n";
     next = `${current}${separator}${workflowBlock}`;
   }

@@ -250,6 +250,45 @@ describe.sequential("cli update flows", () => {
     expect(payload.check_only).toBe(true);
     expect(payload.status).toBe("not-initialized");
   });
+
+  it("does not treat inline marker mentions as managed workflow boundaries", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Inline docs mention `<!-- vibe:workflow-docs:start -->` and `<!-- vibe:workflow-docs:end -->` as examples.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Inline docs mention `<!-- vibe:workflow-docs:start -->`");
+    expect(readme).toContain("<!-- vibe:workflow-docs:start -->");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(2);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(2);
+    expect(readme).toContain("flowchart LR");
+  });
 });
 
 describe("preserveProtectedSections", () => {
