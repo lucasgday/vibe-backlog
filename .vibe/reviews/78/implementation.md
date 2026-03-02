@@ -9,3 +9,15 @@ Implemented repository-policy hardening with minimal surface area: `package.json
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:05:02.682Z
+- run_id: issue-78-pr-95-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Scope is implemented as requested: publish posture is explicitly non-publish for now, package metadata is updated (`private: true`, `license: MIT`), and README now documents publish/tooling/share policies.
+
+### Findings
+- none
