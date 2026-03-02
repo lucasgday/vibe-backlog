@@ -122,6 +122,7 @@ vibe postflight --apply
 `preflight` now prints a security snapshot (policy, gitleaks availability, last scan), a hint when `.vibe` exists but tracker bootstrap marker is missing, and read-only semantic milestone suggestions for issues without milestone.
 `preflight` also performs a best-effort, non-blocking tool version check and prints an explicit `self update` command when a newer `vibe-backlog` release is available.
 `update` checks/applies `.vibe` scaffold updates with metadata tracking in `.vibe/scaffold.json`, dry-run diff preview, and marker-safe preservation of protected sections.
+`init`/`update` also scaffold a managed README workflow section (`<!-- vibe:workflow-docs:start --> ... <!-- vibe:workflow-docs:end -->`) with a Mermaid diagram, preserving non-managed README content.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
@@ -457,3 +458,31 @@ Rules:
   1. reply comment (`addPullRequestReviewThreadReply`)
   2. resolve mutation (`resolveReviewThread`)
 - Auto-body (when `--body` is not provided) includes: PR, HEAD, thread id, outdated status, location, finding title/severity/pass and fingerprint when available.
+
+<!-- vibe:workflow-docs:start -->
+## Vibe Workflow (Managed)
+
+This section is managed by `vibe init` / `vibe update`.
+
+```mermaid
+flowchart LR
+    A["preflight"] --> B["pick issue"]
+    B --> C["implement + tests"]
+    C --> D["postflight"]
+    D --> E{"apply updates?"}
+    E -- "dry-run" --> F["postflight --apply --dry-run"]
+    E -- "yes" --> G["postflight --apply"]
+    G --> H["tracker synced"]
+```
+
+Workflow steps (text fallback):
+
+1. Run `vibe preflight`.
+2. Pick one issue and keep scope focused.
+3. Implement and run tests/build.
+4. Validate `vibe postflight`.
+5. Preview tracker changes with `vibe postflight --apply --dry-run`.
+6. Apply tracker updates with `vibe postflight --apply`.
+
+<!-- vibe:workflow-docs:end -->
+

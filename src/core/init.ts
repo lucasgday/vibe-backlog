@@ -60,10 +60,12 @@ type VibeScaffoldUpdateOptions = {
 const VIBE_DIRECTORIES = [".vibe", ".vibe/runtime", ".vibe/artifacts", ".vibe/templates", ".vibe/reviews", ".vibe/pills"];
 const AGENT_SNIPPET_START = "<!-- vibe:agent-snippet:start -->";
 const AGENT_SNIPPET_END = "<!-- vibe:agent-snippet:end -->";
+const README_WORKFLOW_START = "<!-- vibe:workflow-docs:start -->";
+const README_WORKFLOW_END = "<!-- vibe:workflow-docs:end -->";
 const TRACKER_GITIGNORE_ENTRIES = [".vibe/runtime", ".vibe/artifacts"];
 const DEFAULT_TOOL_PACKAGE_NAME = "vibe-backlog";
 const DEFAULT_TOOL_VERSION = "0.1.0";
-export const VIBE_SCAFFOLD_TEMPLATE_VERSION = 2;
+export const VIBE_SCAFFOLD_TEMPLATE_VERSION = 3;
 const SCAFFOLD_METADATA_RELATIVE_PATH = path.join(".vibe", "scaffold.json");
 const PREVIEW_LINE_LIMIT = 160;
 const PROTECTED_SECTION_MARKERS: readonly ProtectedSectionMarker[] = [
@@ -174,6 +176,38 @@ function buildAgentSnippetBlock(): string {
   return `${AGENT_SNIPPET_START}\n${body}\n${AGENT_SNIPPET_END}\n`;
 }
 
+function buildReadmeWorkflowBlock(): string {
+  return [
+    README_WORKFLOW_START,
+    "## Vibe Workflow (Managed)",
+    "",
+    "This section is managed by `vibe init` / `vibe update`.",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    '    A["preflight"] --> B["pick issue"]',
+    '    B --> C["implement + tests"]',
+    '    C --> D["postflight"]',
+    '    D --> E{"apply updates?"}',
+    '    E -- "dry-run" --> F["postflight --apply --dry-run"]',
+    '    E -- "yes" --> G["postflight --apply"]',
+    '    G --> H["tracker synced"]',
+    "```",
+    "",
+    "Workflow steps (text fallback):",
+    "",
+    "1. Run `vibe preflight`.",
+    "2. Pick one issue and keep scope focused.",
+    "3. Implement and run tests/build.",
+    "4. Validate `vibe postflight`.",
+    "5. Preview tracker changes with `vibe postflight --apply --dry-run`.",
+    "6. Apply tracker updates with `vibe postflight --apply`.",
+    "",
+    README_WORKFLOW_END,
+    "",
+  ].join("\n");
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath);
@@ -271,6 +305,23 @@ function findStandaloneMarkerIndex(content: string, markerText: string, fromInde
   }
 
   return -1;
+}
+
+function stripStandaloneMarkerLines(content: string, markerText: string): string {
+  let next = content;
+
+  while (true) {
+    const markerIndex = findStandaloneMarkerIndex(next, markerText);
+    if (markerIndex < 0) break;
+
+    const lineStart = next.lastIndexOf("\n", markerIndex - 1);
+    const lineEnd = next.indexOf("\n", markerIndex + markerText.length);
+    const removeStart = lineStart < 0 ? 0 : lineStart + 1;
+    const removeEnd = lineEnd < 0 ? next.length : lineEnd + 1;
+    next = `${next.slice(0, removeStart)}${next.slice(removeEnd)}`;
+  }
+
+  return next;
 }
 
 function findMarkedSectionRange(content: string, marker: ProtectedSectionMarker): { start: number; end: number } | null {
@@ -417,6 +468,61 @@ async function upsertAgentSnippet(
   }
   pushChange(result, "updated", agentsPath);
   recordPreview(previews, agentsPath, current, next);
+}
+
+async function upsertReadmeWorkflowSection(
+  readmePath: string,
+  dryRun: boolean,
+  result: InitScaffoldResult,
+  previews?: VibeScaffoldDiffPreview[],
+): Promise<void> {
+  const workflowBlock = buildReadmeWorkflowBlock();
+  const readmeExists = await pathExists(readmePath);
+
+  if (!readmeExists) {
+    if (!dryRun) {
+      await writeFile(readmePath, workflowBlock, "utf8");
+    }
+    pushChange(result, "created", readmePath);
+    recordPreview(previews, readmePath, null, workflowBlock);
+    return;
+  }
+
+  const current = await readFile(readmePath, "utf8");
+  const start = findStandaloneMarkerIndex(current, README_WORKFLOW_START);
+  const end = findStandaloneMarkerIndex(current, README_WORKFLOW_END);
+
+  let next = current;
+  if (start >= 0 && end > start) {
+    const endWithMarker = end + README_WORKFLOW_END.length;
+    next = `${current.slice(0, start)}${workflowBlock}${current.slice(endWithMarker)}`;
+  } else if (start < 0 && end < 0) {
+    const separator = current.endsWith("\n") ? "\n" : "\n\n";
+    next = `${current}${separator}${workflowBlock}`;
+  } else {
+    let repairedBase = current;
+    if (start >= 0 && end < 0) {
+      // Start marker without end marker: treat trailing region as corrupted managed block.
+      repairedBase = current.slice(0, start).trimEnd();
+    } else {
+      repairedBase = stripStandaloneMarkerLines(repairedBase, README_WORKFLOW_START);
+      repairedBase = stripStandaloneMarkerLines(repairedBase, README_WORKFLOW_END);
+      repairedBase = repairedBase.trimEnd();
+    }
+    const separator = repairedBase.endsWith("\n") ? "\n" : "\n\n";
+    next = `${repairedBase}${separator}${workflowBlock}`;
+  }
+
+  if (next === current) {
+    pushChange(result, "unchanged", readmePath);
+    return;
+  }
+
+  if (!dryRun) {
+    await writeFile(readmePath, next, "utf8");
+  }
+  pushChange(result, "updated", readmePath);
+  recordPreview(previews, readmePath, current, next);
 }
 
 async function upsertGitignoreEntries(
@@ -596,6 +702,7 @@ export async function applyVibeScaffoldUpdate(options: VibeScaffoldUpdateOptions
     result.previews,
   );
   await upsertAgentSnippet(path.join(cwd, "AGENTS.md"), dryRun, result, result.previews);
+  await upsertReadmeWorkflowSection(path.join(cwd, "README.md"), dryRun, result, result.previews);
   await upsertGitignoreEntries(path.join(cwd, ".gitignore"), dryRun, result, result.previews);
 
   result.applied = !dryRun;
@@ -626,6 +733,7 @@ export async function scaffoldVibeInit(options: InitScaffoldOptions): Promise<In
     result,
   );
   await upsertAgentSnippet(path.join(cwd, "AGENTS.md"), dryRun, result);
+  await upsertReadmeWorkflowSection(path.join(cwd, "README.md"), dryRun, result);
   await upsertGitignoreEntries(path.join(cwd, ".gitignore"), dryRun, result);
 
   return result;

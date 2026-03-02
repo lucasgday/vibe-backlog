@@ -55,6 +55,10 @@ describe.sequential("cli init", () => {
     expect(readFileSync(path.join(tempDir, ".vibe", "contract.yml"), "utf8")).toContain("policy: warn");
     expect(existsSync(path.join(tempDir, "AGENTS.md"))).toBe(true);
     expect(readFileSync(path.join(tempDir, "AGENTS.md"), "utf8")).toContain("<!-- vibe:agent-snippet:start -->");
+    expect(existsSync(path.join(tempDir, "README.md"))).toBe(true);
+    expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("<!-- vibe:workflow-docs:start -->");
+    expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("```mermaid");
+    expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("Workflow steps (text fallback):");
     expect(readFileSync(path.join(tempDir, ".gitignore"), "utf8")).toContain(".vibe/runtime");
     expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(true);
 
@@ -77,6 +81,7 @@ describe.sequential("cli init", () => {
 
   it("is idempotent and does not overwrite existing postflight artifact", async () => {
     writeFileSync(path.join(tempDir, "AGENTS.md"), "# Custom\n", "utf8");
+    writeFileSync(path.join(tempDir, "README.md"), "# Custom README\n\nManual notes.\n", "utf8");
     writeFileSync(path.join(tempDir, ".gitignore"), "node_modules\n", "utf8");
 
     const customPostflight = '{"version":1,"custom":true}\n';
@@ -95,8 +100,13 @@ describe.sequential("cli init", () => {
 
     expect(readFileSync(postflightPath, "utf8")).toBe(customPostflight);
     const agents = readFileSync(path.join(tempDir, "AGENTS.md"), "utf8");
+    const readme = readFileSync(path.join(tempDir, "README.md"), "utf8");
     expect((agents.match(/<!-- vibe:agent-snippet:start -->/g) ?? []).length).toBe(1);
     expect(agents).toContain("# Custom");
+    expect(readme).toContain("# Custom README");
+    expect(readme).toContain("Manual notes.");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect(readme).toContain("```mermaid");
     expect(readFileSync(path.join(tempDir, ".gitignore"), "utf8")).toContain(".vibe/artifacts");
     expect(execaMock).not.toHaveBeenCalled();
   });

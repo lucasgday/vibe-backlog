@@ -141,6 +141,7 @@ describe.sequential("cli update flows", () => {
 
     const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
     const agentsPath = path.join(tempDir, "AGENTS.md");
+    const readmePath = path.join(tempDir, "README.md");
     unlinkSync(metadataPath);
     writeFileSync(
       agentsPath,
@@ -158,6 +159,22 @@ describe.sequential("cli update flows", () => {
       ].join("\n"),
       "utf8",
     );
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "old workflow block",
+        "<!-- vibe:workflow-docs:end -->",
+        "",
+        "Manual footer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--check"]);
@@ -165,14 +182,17 @@ describe.sequential("cli update flows", () => {
     expect(logs.some((line) => line.includes("metadata missing"))).toBe(true);
 
     const agentsBeforeDryRun = readFileSync(agentsPath, "utf8");
+    const readmeBeforeDryRun = readFileSync(readmePath, "utf8");
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--dry-run"]);
     expect(logs.some((line) => line.includes("scaffold update: dry-run mode"))).toBe(true);
     expect(logs.some((line) => line.includes("Diff preview:"))).toBe(true);
     expect(logs.some((line) => line.includes("AGENTS.md"))).toBe(true);
+    expect(logs.some((line) => line.includes("README.md"))).toBe(true);
     expect(logs.some((line) => line.includes("keep-my-note"))).toBe(false);
     expect(logs.some((line) => line.includes("[vibe protected section redacted in preview]"))).toBe(true);
     expect(readFileSync(agentsPath, "utf8")).toBe(agentsBeforeDryRun);
+    expect(readFileSync(readmePath, "utf8")).toBe(readmeBeforeDryRun);
     expect(existsSync(metadataPath)).toBe(false);
 
     logs.length = 0;
@@ -181,12 +201,20 @@ describe.sequential("cli update flows", () => {
     expect(existsSync(metadataPath)).toBe(true);
 
     const agentsAfterApply = readFileSync(agentsPath, "utf8");
+    const readmeAfterApply = readFileSync(readmePath, "utf8");
     expect(agentsAfterApply).toContain("keep-my-note");
     expect(agentsAfterApply).toContain("Run `node dist/cli.cjs preflight` before implementation.");
     expect(agentsAfterApply).not.toContain("old managed snippet body");
+    expect(readmeAfterApply).toContain("# Demo repo");
+    expect(readmeAfterApply).toContain("Manual intro.");
+    expect(readmeAfterApply).toContain("Manual footer.");
+    expect(readmeAfterApply).toContain("<!-- vibe:workflow-docs:start -->");
+    expect(readmeAfterApply).toContain("flowchart LR");
+    expect(readmeAfterApply).toContain("Workflow steps (text fallback):");
+    expect(readmeAfterApply).not.toContain("old workflow block");
 
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
-    expect(metadata.scaffold_template_version).toBe(2);
+    expect(metadata.scaffold_template_version).toBe(3);
 
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--check"]);
@@ -194,6 +222,7 @@ describe.sequential("cli update flows", () => {
 
     const metadataAfterApply = readFileSync(metadataPath, "utf8");
     const agentsAfterSecondSnapshot = readFileSync(agentsPath, "utf8");
+    const readmeAfterSecondSnapshot = readFileSync(readmePath, "utf8");
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update"]);
     expect(logs.some((line) => line.includes("status: up-to-date"))).toBe(true);
@@ -201,6 +230,7 @@ describe.sequential("cli update flows", () => {
     expect(logs.some((line) => line.includes("Diff preview:"))).toBe(false);
     expect(readFileSync(metadataPath, "utf8")).toBe(metadataAfterApply);
     expect(readFileSync(agentsPath, "utf8")).toBe(agentsAfterSecondSnapshot);
+    expect(readFileSync(readmePath, "utf8")).toBe(readmeAfterSecondSnapshot);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -220,6 +250,144 @@ describe.sequential("cli update flows", () => {
     expect(payload.kind).toBe("scaffold-update-check");
     expect(payload.check_only).toBe(true);
     expect(payload.status).toBe("not-initialized");
+  });
+
+  it("does not treat inline marker mentions as managed workflow boundaries", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Inline docs mention `<!-- vibe:workflow-docs:start -->` and `<!-- vibe:workflow-docs:end -->` as examples.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Inline docs mention `<!-- vibe:workflow-docs:start -->`");
+    expect(readme).toContain("<!-- vibe:workflow-docs:start -->");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(2);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(2);
+    expect(readme).toContain("flowchart LR");
+  });
+
+  it("repairs start-only workflow marker corruption before marking scaffold up-to-date", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "stale workflow fragment",
+        "legacy block line",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Manual intro.");
+    expect(readme).not.toContain("stale workflow fragment");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(1);
+    expect(readme).toContain("flowchart LR");
+
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
+    expect(metadata.scaffold_template_version).toBe(3);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--check"]);
+    expect(logs.some((line) => line.includes("scaffold update: up-to-date"))).toBe(true);
+  });
+
+  it("repairs end-only workflow marker corruption before marking scaffold up-to-date", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--skip-tracker"]);
+
+    const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
+    const readmePath = path.join(tempDir, "README.md");
+
+    unlinkSync(metadataPath);
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "Manual footer.",
+        "<!-- vibe:workflow-docs:end -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update"]);
+    expect(logs.some((line) => line.includes("scaffold update: DONE"))).toBe(true);
+
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("Manual intro.");
+    expect(readme).toContain("Manual footer.");
+    expect((readme.match(/<!-- vibe:workflow-docs:start -->/g) ?? []).length).toBe(1);
+    expect((readme.match(/<!-- vibe:workflow-docs:end -->/g) ?? []).length).toBe(1);
+    expect(readme).toContain("flowchart LR");
+
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
+    expect(metadata.scaffold_template_version).toBe(3);
+
+    logs.length = 0;
+    await program.parseAsync(["node", "vibe", "update", "--check"]);
+    expect(logs.some((line) => line.includes("scaffold update: up-to-date"))).toBe(true);
   });
 });
 

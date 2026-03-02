@@ -1,0 +1,59 @@
+# Implementation Pass
+
+## Run 2026-03-02T11:16:56Z
+- run_id: manual-issue-22-implementation
+- findings: 0
+
+### Summary
+Added a managed README workflow scaffold block for `.vibe` repos using deterministic markers (`<!-- vibe:workflow-docs:start -->` / `<!-- vibe:workflow-docs:end -->`) and a Mermaid flowchart. The block is inserted on `vibe init`, refreshed on `vibe update`, and is idempotent (no duplicate managed blocks on rerun). Non-managed README content is preserved.
+
+### Findings
+- none
+
+## Run 2026-03-02T11:18:28.416Z
+- run_id: issue-22-pr-96-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The change implements a managed README Mermaid workflow block for `.vibe` repos with explicit markers, hooks it into both `vibe init` and `vibe update`, and bumps scaffold template version to deliver the feature to existing repos via update flow.
+
+### Findings
+- none
+
+## Run 2026-03-02T11:25:05.790Z
+- run_id: issue-22-pr-96-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The follow-up change addresses the reported boundary-detection bug by switching README workflow marker detection from raw substring search to standalone-line parsing, preventing inline marker mentions from being treated as managed block boundaries.
+
+### Findings
+- none
+
+## Run 2026-03-02T11:35:21.609Z
+- run_id: issue-22-pr-96-attempt-1-codex-review
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+One defect found in README managed-block recovery logic during scaffold updates.
+
+### Findings
+- [P2] Partial README workflow markers are silently ignored while scaffold metadata still advances (src/core/init.ts:467)
+
+## Run 2026-03-02T11:40:01.144Z
+- run_id: issue-22-pr-96-attempt-1-passrunner-20260302
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 defect found: malformed one-sided README workflow markers can leave docs unrepaired while scaffold metadata is still advanced.
+
+### Findings
+- [P2] One-sided README workflow markers are ignored, allowing a false up-to-date scaffold state (src/core/init.ts:466)
