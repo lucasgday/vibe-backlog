@@ -141,6 +141,7 @@ describe.sequential("cli update flows", () => {
 
     const metadataPath = path.join(tempDir, ".vibe", "scaffold.json");
     const agentsPath = path.join(tempDir, "AGENTS.md");
+    const readmePath = path.join(tempDir, "README.md");
     unlinkSync(metadataPath);
     writeFileSync(
       agentsPath,
@@ -158,6 +159,22 @@ describe.sequential("cli update flows", () => {
       ].join("\n"),
       "utf8",
     );
+    writeFileSync(
+      readmePath,
+      [
+        "# Demo repo",
+        "",
+        "Manual intro.",
+        "",
+        "<!-- vibe:workflow-docs:start -->",
+        "old workflow block",
+        "<!-- vibe:workflow-docs:end -->",
+        "",
+        "Manual footer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--check"]);
@@ -165,14 +182,17 @@ describe.sequential("cli update flows", () => {
     expect(logs.some((line) => line.includes("metadata missing"))).toBe(true);
 
     const agentsBeforeDryRun = readFileSync(agentsPath, "utf8");
+    const readmeBeforeDryRun = readFileSync(readmePath, "utf8");
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--dry-run"]);
     expect(logs.some((line) => line.includes("scaffold update: dry-run mode"))).toBe(true);
     expect(logs.some((line) => line.includes("Diff preview:"))).toBe(true);
     expect(logs.some((line) => line.includes("AGENTS.md"))).toBe(true);
+    expect(logs.some((line) => line.includes("README.md"))).toBe(true);
     expect(logs.some((line) => line.includes("keep-my-note"))).toBe(false);
     expect(logs.some((line) => line.includes("[vibe protected section redacted in preview]"))).toBe(true);
     expect(readFileSync(agentsPath, "utf8")).toBe(agentsBeforeDryRun);
+    expect(readFileSync(readmePath, "utf8")).toBe(readmeBeforeDryRun);
     expect(existsSync(metadataPath)).toBe(false);
 
     logs.length = 0;
@@ -181,12 +201,19 @@ describe.sequential("cli update flows", () => {
     expect(existsSync(metadataPath)).toBe(true);
 
     const agentsAfterApply = readFileSync(agentsPath, "utf8");
+    const readmeAfterApply = readFileSync(readmePath, "utf8");
     expect(agentsAfterApply).toContain("keep-my-note");
     expect(agentsAfterApply).toContain("Run `node dist/cli.cjs preflight` before implementation.");
     expect(agentsAfterApply).not.toContain("old managed snippet body");
+    expect(readmeAfterApply).toContain("# Demo repo");
+    expect(readmeAfterApply).toContain("Manual intro.");
+    expect(readmeAfterApply).toContain("Manual footer.");
+    expect(readmeAfterApply).toContain("<!-- vibe:workflow-docs:start -->");
+    expect(readmeAfterApply).toContain("flowchart LR");
+    expect(readmeAfterApply).not.toContain("old workflow block");
 
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
-    expect(metadata.scaffold_template_version).toBe(2);
+    expect(metadata.scaffold_template_version).toBe(3);
 
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update", "--check"]);
@@ -194,6 +221,7 @@ describe.sequential("cli update flows", () => {
 
     const metadataAfterApply = readFileSync(metadataPath, "utf8");
     const agentsAfterSecondSnapshot = readFileSync(agentsPath, "utf8");
+    const readmeAfterSecondSnapshot = readFileSync(readmePath, "utf8");
     logs.length = 0;
     await program.parseAsync(["node", "vibe", "update"]);
     expect(logs.some((line) => line.includes("status: up-to-date"))).toBe(true);
@@ -201,6 +229,7 @@ describe.sequential("cli update flows", () => {
     expect(logs.some((line) => line.includes("Diff preview:"))).toBe(false);
     expect(readFileSync(metadataPath, "utf8")).toBe(metadataAfterApply);
     expect(readFileSync(agentsPath, "utf8")).toBe(agentsAfterSecondSnapshot);
+    expect(readFileSync(readmePath, "utf8")).toBe(readmeAfterSecondSnapshot);
     expect(process.exitCode).toBeUndefined();
   });
 

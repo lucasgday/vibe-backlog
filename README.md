@@ -122,6 +122,7 @@ vibe postflight --apply
 `preflight` now prints a security snapshot (policy, gitleaks availability, last scan), a hint when `.vibe` exists but tracker bootstrap marker is missing, and read-only semantic milestone suggestions for issues without milestone.
 `preflight` also performs a best-effort, non-blocking tool version check and prints an explicit `self update` command when a newer `vibe-backlog` release is available.
 `update` checks/applies `.vibe` scaffold updates with metadata tracking in `.vibe/scaffold.json`, dry-run diff preview, and marker-safe preservation of protected sections.
+`init`/`update` also scaffold a managed README workflow section (`<!-- vibe:workflow-docs:start --> ... <!-- vibe:workflow-docs:end -->`) with a Mermaid diagram, preserving non-managed README content.
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
 `turn start --issue <n>` now auto-creates `.vibe/reviews/<n>/` templates (`implementation`, `security`, `quality`, `ux`, `ops`) when missing.
 `turn start --issue <n>` now enforces a remote-state guard (`git fetch origin`, `git status -sb`, `git branch -vv`, PR state check on current branch) and blocks branch creation on behind/diverged or closed/merged-PR branch states with explicit remediation commands.
