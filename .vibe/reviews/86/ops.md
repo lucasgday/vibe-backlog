@@ -9,3 +9,15 @@ No workflow code or dependency changes were introduced. Release/operations risk 
 
 ### Findings
 - none
+
+## Run 2026-03-02T03:01:41.569Z
+- run_id: issue-86-pr-94-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operational impact is low-risk and positive: maintainers now have explicit remediation and verification steps for Actions policy mismatches that previously caused startup failures.
+
+### Findings
+- none

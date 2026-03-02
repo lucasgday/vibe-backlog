@@ -9,3 +9,15 @@ Added a targeted README troubleshooting section for the `gitleaks` workflow star
 
 ### Findings
 - none
+
+## Run 2026-03-02T03:01:41.567Z
+- run_id: issue-86-pr-94-attempt-1
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Documentation change is aligned with issue scope and DoD: it adds symptom, root cause, exact external actions, restricted/fallback policy options, and verification steps for the gitleaks workflow startup failure.
+
+### Findings
+- none
