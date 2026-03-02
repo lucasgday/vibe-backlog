@@ -149,6 +149,28 @@ LLMs (Codex, Claude, etc.) must read and follow `AGENTS.md` before making change
 - Vulnerability reporting policy: `SECURITY.md`
 - CI log/artifact hardening policy: `.github/CI_SECURITY.md`
 
+## Repository policy (publish + sharing)
+
+Publish posture (current):
+
+- npm publish is disabled for now; this repository is not released as a package yet.
+- `package.json` is intentionally set to `"private": true` to prevent accidental publish.
+- `package.json` uses `"license": "MIT"` to match `LICENSE`.
+
+Default gitleaks policy for repos using `.vibe`:
+
+- `vibe init` scaffolds `.vibe/contract.yml` with `security.gitleaks.policy: warn`.
+- `warn` keeps scans visible but non-blocking while setup is still in progress.
+- `vibe` does not auto-install gitleaks on user machines; installation is explicit (local toolchain and/or CI).
+
+Manual checklist for sharing this repo with sebas / juli / fer (GitHub Admin):
+
+1. Go to `Settings -> Collaborators and teams`.
+2. Invite `sebas`, `juli`, and `fer`.
+3. Set role `Admin` for each collaborator.
+4. Confirm each invite is accepted and access works.
+5. Record completion in the active issue/postflight comment for audit trail.
+
 ## Canonical commands (recommended)
 
 Use these for deterministic execution:
