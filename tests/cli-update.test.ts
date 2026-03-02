@@ -203,7 +203,8 @@ describe.sequential("cli update flows", () => {
     const agentsAfterApply = readFileSync(agentsPath, "utf8");
     const readmeAfterApply = readFileSync(readmePath, "utf8");
     expect(agentsAfterApply).toContain("keep-my-note");
-    expect(agentsAfterApply).toContain("Run `node dist/cli.cjs preflight` before implementation.");
+    expect(agentsAfterApply).toContain("Run `vibe preflight` before implementation.");
+    expect(agentsAfterApply).toContain("Validate with `vibe postflight` and apply updates with `vibe postflight --apply`.");
     expect(agentsAfterApply).not.toContain("old managed snippet body");
     expect(readmeAfterApply).toContain("# Demo repo");
     expect(readmeAfterApply).toContain("Manual intro.");

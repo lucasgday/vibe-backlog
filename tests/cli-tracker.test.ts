@@ -257,8 +257,8 @@ describe.sequential("cli tracker bootstrap", () => {
     await program.parseAsync(["node", "vibe", "preflight"]);
 
     expect(logs.some((line) => line.includes("Tracker bootstrap suggested:"))).toBe(true);
-    expect(logs.some((line) => line.includes("Run: node dist/cli.cjs tracker bootstrap --dry-run"))).toBe(true);
-    expect(logs.some((line) => line.includes("Then: node dist/cli.cjs tracker bootstrap"))).toBe(true);
+    expect(logs.some((line) => line.includes("Run: vibe tracker bootstrap --dry-run"))).toBe(true);
+    expect(logs.some((line) => line.includes("Then: vibe tracker bootstrap"))).toBe(true);
   });
 });
 

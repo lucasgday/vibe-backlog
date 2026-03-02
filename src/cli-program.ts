@@ -1850,10 +1850,18 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .command("init")
     .description("Initialize agent-first .vibe scaffolding in current repository")
     .option("--dry-run", "Print planned changes without writing files", false)
-    .option("--skip-tracker", "Skip tracker bootstrap gh operations", false)
+    .option("--bootstrap-tracker", "Run tracker bootstrap gh operations", false)
+    .option("--skip-tracker", "Compatibility alias for no tracker bootstrap (default behavior)", false)
     .action(async (opts) => {
       const dryRun = Boolean(opts.dryRun);
+      const bootstrapTracker = Boolean(opts.bootstrapTracker);
       const skipTracker = Boolean(opts.skipTracker);
+
+      if (bootstrapTracker && skipTracker) {
+        console.error("init: use either --bootstrap-tracker or --skip-tracker, not both.");
+        process.exitCode = 1;
+        return;
+      }
 
       try {
         console.log(`init: ${dryRun ? "dry-run" : "apply"} mode`);
@@ -1865,11 +1873,14 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         printPathList("Created", scaffoldResult.created);
         printPathList("Updated", scaffoldResult.updated);
 
-        if (!skipTracker) {
+        if (bootstrapTracker) {
           console.log("\ninit: tracker bootstrap");
           await runTrackerBootstrap(execaFn, dryRun);
         } else {
-          console.log("\ninit: tracker bootstrap skipped (--skip-tracker).");
+          const reason = skipTracker ? "--skip-tracker" : "default";
+          console.log(`\ninit: tracker bootstrap skipped (${reason}).`);
+          console.log("Run later (optional): vibe tracker bootstrap --dry-run");
+          console.log("Then: vibe tracker bootstrap");
         }
 
         if (dryRun) {
@@ -2347,8 +2358,8 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         if (shouldHint) {
           console.log("\nTracker bootstrap suggested:");
           console.log("Detected .vibe without tracker taxonomy marker.");
-          console.log("Run: node dist/cli.cjs tracker bootstrap --dry-run");
-          console.log("Then: node dist/cli.cjs tracker bootstrap");
+          console.log("Run: vibe tracker bootstrap --dry-run");
+          console.log("Then: vibe tracker bootstrap");
         }
       } catch {
         // Ignore hint failures: preflight must remain resilient.
