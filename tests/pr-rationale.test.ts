@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   autofillRationaleSections,
+  buildRationaleSignalDebug,
   buildRationaleSections,
   hasRationaleTodoPlaceholders,
   type RationaleContext,
@@ -116,7 +117,7 @@ describe("pr rationale helpers", () => {
   });
 
   it("uses explicit fallback text when changed-file signals are unavailable", () => {
-    const sections = buildRationaleSections({
+    const fallbackContext: RationaleContext = {
       issueId: 83,
       issueTitle: "feat(pr): dynamic rationale sections from PR signals",
       branch: "issue-83-dynamic-pr-rationale",
@@ -124,10 +125,13 @@ describe("pr rationale helpers", () => {
       signals: {
         issueLabels: ["module:cli"],
       },
-    });
+    };
+    const sections = buildRationaleSections(fallbackContext);
+    const debug = buildRationaleSignalDebug(fallbackContext);
 
     expect(sections.architecture.join("\n")).toContain("Fallback: changed-file signals were unavailable");
     expect(sections.alternatives.join("\n")).toContain("Fallback: postpone specificity until changed-file signals are available");
+    expect(debug.fallback_reasons).toContainEqual(expect.objectContaining({ code: "changed-files-unavailable" }));
   });
 
   it("is deterministic for the same inputs even when signal ordering differs", () => {
@@ -154,6 +158,56 @@ describe("pr rationale helpers", () => {
     });
 
     expect(b).toEqual(a);
+  });
+
+  it("emits deterministic signal debug for CLI-heavy context", () => {
+    const context: RationaleContext = {
+      issueId: 85,
+      issueTitle: "feat(pr): expose rationale signal debug/json output",
+      branch: "issue-85-rationale-signal-debug-json",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["enhancement", "module:cli", "module:cli"],
+        changedFiles: ["src/cli-program.ts", "src/core/pr-rationale.ts", "src/core/pr-open.ts"],
+      },
+    };
+
+    const debugA = buildRationaleSignalDebug(context);
+    const debugB = buildRationaleSignalDebug({
+      ...context,
+      signals: {
+        issueLabels: ["module:cli", "enhancement"],
+        changedFiles: ["src/core/pr-open.ts", "src/cli-program.ts", "src/core/pr-rationale.ts"],
+      },
+    });
+
+    expect(debugA).toEqual(debugB);
+    expect(debugA.schema_version).toBe(1);
+    expect(debugA.profile).toBe("code-only");
+    expect(debugA.modules).toEqual(["cli", "pr"]);
+    expect(debugA.fallback_reasons.some((reason) => reason.code === "changed-files-unavailable")).toBe(false);
+  });
+
+  it("emits docs-only debug with explicit fallback reasons", () => {
+    const debug = buildRationaleSignalDebug({
+      issueId: 21,
+      issueTitle: "docs: add Mermaid workflow diagram for vibe lifecycle",
+      branch: "issue-21-readme-mermaid",
+      mode: "pr-open",
+      signals: {
+        issueLabels: ["module:docs"],
+        changedFiles: ["README.md", "docs/workflow.md"],
+      },
+    });
+
+    expect(debug.profile).toBe("docs-only");
+    expect(debug.schema_version).toBe(1);
+    expect(debug.modules).toContain("docs");
+    expect(debug.fallback_reasons).toContainEqual(
+      expect.objectContaining({
+        code: "validation-signals-unavailable",
+      }),
+    );
   });
 
   it("preserves user-written text outside placeholder sections during autofill", () => {

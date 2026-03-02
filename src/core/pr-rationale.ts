@@ -78,7 +78,7 @@ const TODO_PLACEHOLDER_LINE_REGEX = /(?:^|\r?\n)\s*(?:[-*]\s+)?TODO(?:\s*:|\b)/i
 const DOC_FILE_REGEX = /(?:^|\/)(?:README|CHANGELOG|SECURITY|CONTRIBUTING)\.md$/i;
 const MARKDOWN_FILE_REGEX = /\.md$/i;
 
-type ChangeProfile =
+export type ChangeProfile =
   | "unknown"
   | "docs-only"
   | "tests-only"
@@ -87,6 +87,38 @@ type ChangeProfile =
   | "code+docs"
   | "code+tests+docs"
   | "mixed";
+
+export type RationaleFallbackReasonCode =
+  | "changed-files-unavailable"
+  | "modules-unresolved"
+  | "validation-signals-unavailable"
+  | "review-signals-unavailable";
+
+export type RationaleFallbackReason = {
+  code: RationaleFallbackReasonCode;
+  detail: string;
+};
+
+export type RationaleSignalDebug = {
+  schema_version: 1;
+  issue_id: number;
+  issue_title: string;
+  branch: string;
+  mode: RationaleMode;
+  profile: ChangeProfile;
+  modules: string[];
+  label_modules: string[];
+  file_modules: string[];
+  issue_themes: string[];
+  issue_labels: string[];
+  changed_files_count: number;
+  changed_files_sample: string[];
+  has_changed_file_signals: boolean;
+  validation_signal_count: number;
+  validation_summary: string | null;
+  review_findings: RationaleReviewFindingsSignal | null;
+  fallback_reasons: RationaleFallbackReason[];
+};
 
 type RationaleFacts = {
   labels: string[];
@@ -296,6 +328,38 @@ function buildFacts(context: RationaleContext): RationaleFacts {
   };
 }
 
+function buildFallbackReasons(context: RationaleContext, facts: RationaleFacts): RationaleFallbackReason[] {
+  const reasons: RationaleFallbackReason[] = [];
+
+  if (!facts.hasChangedFileSignals) {
+    reasons.push({
+      code: "changed-files-unavailable",
+      detail: "Changed-file signals were unavailable; rationale falls back to issue metadata.",
+    });
+  }
+  if (!facts.modules.length) {
+    reasons.push({
+      code: "modules-unresolved",
+      detail: "No modules were inferred from issue labels or changed-file mappings.",
+    });
+  }
+  if (!facts.validationSignals.length && !facts.reviewFindings) {
+    if (context.mode === "review") {
+      reasons.push({
+        code: "review-signals-unavailable",
+        detail: "Validation/review-summary signals were unavailable in review mode; rationale uses issue+diff signals only.",
+      });
+    } else {
+      reasons.push({
+        code: "validation-signals-unavailable",
+        detail: "Validation signals were unavailable; rationale avoids claiming execution outcomes.",
+      });
+    }
+  }
+
+  return reasons;
+}
+
 function buildFallbackLine(): string {
   return "- Fallback: changed-file signals were unavailable, so this rationale is generated from issue metadata (title/branch/mode) only.";
 }
@@ -448,6 +512,30 @@ export function buildRationaleSections(context: RationaleContext): RationaleSect
     architecture: buildSectionLines("architecture", context),
     why: buildSectionLines("why", context),
     alternatives: buildSectionLines("alternatives", context),
+  };
+}
+
+export function buildRationaleSignalDebug(context: RationaleContext): RationaleSignalDebug {
+  const facts = buildFacts(context);
+  return {
+    schema_version: 1,
+    issue_id: context.issueId,
+    issue_title: context.issueTitle,
+    branch: context.branch,
+    mode: context.mode,
+    profile: facts.profile,
+    modules: facts.modules,
+    label_modules: facts.labelModules,
+    file_modules: facts.fileModules,
+    issue_themes: facts.issueThemes,
+    issue_labels: facts.labels,
+    changed_files_count: facts.changedFiles.length,
+    changed_files_sample: facts.sampleFiles,
+    has_changed_file_signals: facts.hasChangedFileSignals,
+    validation_signal_count: facts.validationSignals.length,
+    validation_summary: summarizeValidationSignals(facts.validationSignals),
+    review_findings: facts.reviewFindings,
+    fallback_reasons: buildFallbackReasons(context, facts),
   };
 }
 

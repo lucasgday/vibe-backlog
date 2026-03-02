@@ -242,6 +242,66 @@ describe.sequential("cli pr open", () => {
     ).toBe(false);
   });
 
+  it("prints rationale signal debug JSON when requested", async () => {
+    const logs: string[] = [];
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") return { stdout: "[]" };
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            title: "feat(pr): expose rationale signal debug/json output",
+            url: "https://example.test/issues/85",
+            labels: [{ name: "module:cli" }],
+            body: "Add machine-readable debug output for rationale signals.",
+          }),
+        };
+      }
+      if (cmd === "git" && args.join(" ") === "rev-parse --verify --quiet origin/main") return { stdout: "base-sha\n" };
+      if (cmd === "git" && args.join(" ") === "rev-parse --verify --quiet issue-85-rationale-signal-debug-json")
+        return { stdout: "head-sha\n" };
+      if (cmd === "git" && args.join(" ") === "diff --name-only origin/main...issue-85-rationale-signal-debug-json") {
+        return { stdout: "src/cli-program.ts\ndocs/rationale.md\n" };
+      }
+      if (cmd === "git" && args.join(" ") === "diff --name-only --cached") return { stdout: "" };
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync([
+      "node",
+      "vibe",
+      "pr",
+      "open",
+      "--dry-run",
+      "--skip-review-gate",
+      "--rationale-signals-json",
+      "--issue",
+      "85",
+      "--branch",
+      "issue-85-rationale-signal-debug-json",
+      "--base",
+      "main",
+    ]);
+
+    expect(process.exitCode).toBeUndefined();
+    const debugLine = logs.find((line) => line.startsWith("pr open: rationale_signals_json="));
+    expect(debugLine).toBeTruthy();
+    const json = JSON.parse(String(debugLine).slice("pr open: rationale_signals_json=".length)) as {
+      issue_id: number;
+      profile: string;
+      fallback_reasons: Array<{ code: string }>;
+      modules: string[];
+    };
+    expect(json.issue_id).toBe(85);
+    expect(json.profile).toBe("code+docs");
+    expect(json.modules).toEqual(expect.arrayContaining(["cli", "docs"]));
+    expect(json.fallback_reasons).toContainEqual(expect.objectContaining({ code: "validation-signals-unavailable" }));
+  });
+
   it("autofills rationale placeholders on existing PR body", async () => {
     await writeTurnContext({
       issue_id: 6,

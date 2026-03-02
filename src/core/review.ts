@@ -10,6 +10,8 @@ import {
   type ReviewPassResult,
 } from "./review-agent";
 import { persistReviewProviderSelection, resolveReviewAgentExecutionPlan } from "./review-provider";
+import { listChangedFilesForRationale } from "./git-changed-files";
+import { buildRationaleSignalDebug, type RationaleSignalDebug } from "./pr-rationale";
 import {
   buildReviewSummaryBody,
   buildReviewPolicyKey,
@@ -75,6 +77,7 @@ export type ReviewCommandOptions = {
   strict: boolean;
   followupLabel: "bug" | "enhancement" | null;
   computeClass?: string | null;
+  rationaleSignalsJson?: boolean;
   flowKind?: ReviewFlowKind;
   onProgress?: (message: string) => void;
 };
@@ -108,6 +111,7 @@ export type ReviewCommandResult = {
   agentInvocationRetryBudget: number;
   phaseTimings: ReviewPhaseTimings;
   phaseTimingDeltas: ReviewPhaseTimingDeltas | null;
+  rationaleSignals: RationaleSignalDebug | null;
 };
 
 type ReviewRunContext = {
@@ -868,6 +872,11 @@ export async function runReviewCommand(
 
   emitProgress(onProgress, `loading issue #${context.issueId}`);
   const issue = await fetchIssueSnapshot(execaFn, context.issueId);
+  let rationaleChangedFiles: string[] | null = null;
+  let rationaleSignals: RationaleSignalDebug | null = null;
+  if (options.rationaleSignalsJson) {
+    rationaleChangedFiles = await listChangedFilesForRationale(execaFn, { baseBranch: context.baseBranch, branch: context.branch });
+  }
   const executionPolicy = resolveReviewExecutionPolicy({
     flow: flowKind,
     computeClassOverride: options.computeClass,
@@ -892,6 +901,7 @@ export async function runReviewCommand(
     issueLabels: issue.labels,
     branch: context.branch,
     baseBranch: context.baseBranch,
+    changedFilesOverride: rationaleChangedFiles,
     dryRun: options.dryRun,
   });
 
@@ -1428,6 +1438,25 @@ export async function runReviewCommand(
     throw publishFailedError;
   }
 
+  if (options.rationaleSignalsJson) {
+    const severities = Array.from(new Set(allFindings.map((finding) => finding.severity))).sort((a, b) => a.localeCompare(b));
+    rationaleSignals = buildRationaleSignalDebug({
+      issueId: context.issueId,
+      issueTitle: issue.title,
+      branch: context.branch,
+      mode: "review",
+      signals: {
+        issueLabels: issue.labels,
+        changedFiles: rationaleChangedFiles ?? [],
+        reviewFindings: {
+          total: allFindings.length,
+          unresolved: unresolvedFindings.length,
+          severities,
+        },
+      },
+    });
+  }
+
   const summary = buildOutcomeSummaryMarkdown({
     issueId: context.issueId,
     issueTitle: issue.title,
@@ -1489,5 +1518,6 @@ export async function runReviewCommand(
     agentInvocationRetryBudget: executionPolicy.agentInvocationRetryBudget,
     phaseTimings,
     phaseTimingDeltas,
+    rationaleSignals,
   };
 }
