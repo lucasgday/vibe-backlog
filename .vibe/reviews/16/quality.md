@@ -12,3 +12,16 @@ Commands:
 
 Untested:
 - Manual browser interaction of `ui serve` runtime (selector switching and visual polish) remains for interactive QA.
+
+## Run 2026-03-02T19:48:15.949Z
+- run_id: issue-16-review-pass-1
+- attempt: 1/5
+- findings: 2
+- autofix_applied: no
+
+### Summary
+Core coverage exists, but two behavior-critical test gaps remain for runtime robustness.
+
+### Findings
+- [P2] No lifecycle test covers real `ui serve` boot/shutdown path (tests/ui-cockpit.test.ts:62)
+- [P3] Missing tests for malformed turn context fallback behavior (src/ui/cockpit.ts:454)

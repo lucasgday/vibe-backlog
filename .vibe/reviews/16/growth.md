@@ -4,3 +4,16 @@ Growth pass:
 - Next measurable opportunities:
   - Add event counters for `project_selected`, `status_loaded`, and `no_turn_detected` to quantify onboarding friction.
   - Add CTA nudges when turn context is missing (e.g., inline `vibe turn start --issue <n>` copy button) to improve first successful workflow completion.
+
+## Run 2026-03-02T19:48:15.950Z
+- run_id: issue-16-review-pass-1
+- attempt: 1/5
+- findings: 2
+- autofix_applied: no
+
+### Summary
+Two product-growth opportunities are evident and should be tracked as follow-up issues.
+
+### Findings
+- [P3] No instrumentation for selector usage or status load failures (src/ui/cockpit.ts:368)
+- [P3] Missing-turn empty state lacks a direct activation CTA (src/ui/cockpit.ts:523)
