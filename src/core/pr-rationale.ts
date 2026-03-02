@@ -421,26 +421,39 @@ function buildArchitectureLines(context: RationaleContext, facts: RationaleFacts
 }
 
 function buildWhyLines(context: RationaleContext, facts: RationaleFacts): string[] {
-  const themeText = facts.issueThemes.length ? ` themes=${facts.issueThemes.join(", ")}` : "";
-  const labelText = facts.labels.length ? ` labels=${facts.labels.join(", ")}` : " labels=none";
+  const themeText = facts.issueThemes.length ? facts.issueThemes.join(", ") : "none";
+  const labelText = facts.labels.length ? facts.labels.join(", ") : "none";
+  const moduleText = facts.modules.length ? facts.modules.join(", ") : "none inferred";
+  const sampleText = formatSampleFiles(facts.sampleFiles);
+  const evidenceText = facts.hasChangedFileSignals ? sampleText : "changed-file signals unavailable";
   const lines = [
-    `- Generate reviewer context from issue metadata (\`${context.issueTitle}\`;${themeText || " themes=none"};${labelText}) instead of reusing a boilerplate rationale block.`,
+    `- Tailor this rationale to issue #${context.issueId} (\`${context.issueTitle}\`) on \`${context.branch}\`: profile=\`${facts.profile}\`, modules=[${moduleText}], evidence=${evidenceText}, themes=${themeText}, labels=${labelText}.`,
   ];
 
   if (facts.profile === "docs-only") {
-    lines.push("- A docs-only diff should justify wording/contract clarifications, not claim code-path risk changes that are absent from the touched files.");
+    lines.push(
+      `- This docs-only diff should justify wording/contract clarifications in ${sampleText}, not claim runtime risk changes that are absent from touched files.`,
+    );
   } else if (facts.profile === "deps-only") {
     lines.push(
-      "- A dependency-only diff should explain version/advisory intent (for example vulnerability remediation) rather than implying direct feature implementation.",
+      `- A dependency-only diff should explain version/advisory intent from ${sampleText} rather than implying direct feature implementation.`,
     );
   } else if (facts.profile === "tests-only") {
-    lines.push("- A tests-only diff should explain the regression or edge case being pinned so review effort stays focused on intent and coverage quality.");
+    lines.push(
+      `- A tests-only diff should explain the regression or edge case pinned by ${sampleText} so review effort stays focused on intent and coverage quality.`,
+    );
   } else if (facts.hasCode && facts.hasTests) {
-    lines.push("- Mixed code+tests changes need a rationale that links behavior changes to the test edits in the same PR, which a generic template cannot express.");
+    lines.push(
+      `- Mixed code+tests changes need a rationale that links behavior paths and tests in ${sampleText}; a generic template cannot express this mapping.`,
+    );
   } else if (facts.hasCode) {
-    lines.push("- Code-bearing diffs should mention touched modules and expected blast radius so reviewers can prioritize deeper inspection where it matters.");
+    lines.push(
+      `- Code-bearing diffs should call out touched modules [${moduleText}] and blast radius hinted by ${sampleText} so reviewers can prioritize deeper inspection.`,
+    );
   } else {
-    lines.push(`- \`${context.mode}\` generation stays deterministic even when only partial signals are available, so reruns do not rewrite the PR body arbitrarily.`);
+    lines.push(
+      `- \`${context.mode}\` generation stays deterministic when only partial signals are available, so reruns do not rewrite the PR body arbitrarily.`,
+    );
   }
 
   const validationSummary = summarizeValidationSignals(facts.validationSignals);
@@ -466,22 +479,35 @@ function buildWhyLines(context: RationaleContext, facts: RationaleFacts): string
 }
 
 function buildAlternativesLines(context: RationaleContext, facts: RationaleFacts): string[] {
+  const moduleText = facts.modules.length ? facts.modules.join(", ") : "none inferred";
+  const sampleText = formatSampleFiles(facts.sampleFiles);
+  const evidenceText = facts.hasChangedFileSignals ? sampleText : "changed-file signals unavailable";
   const lines = [
-    "- Keep one fixed rationale bullet set for every PR: rejected because it produces low-signal descriptions across unrelated changes.",
+    `- Reuse one static alternatives section across all PRs: rejected for this diff (profile=\`${facts.profile}\`, modules=[${moduleText}], evidence=${evidenceText}).`,
   ];
 
   if (facts.profile === "docs-only") {
-    lines.push("- Describe docs-only edits as runtime refactors: rejected because no code/test paths appear in the touched-file signal.");
+    lines.push(`- Describe docs-only edits as runtime refactors: rejected because ${sampleText} contains docs paths, not runtime/test paths.`);
   } else if (facts.profile === "deps-only") {
-    lines.push("- Describe dependency-only updates as feature delivery work: rejected because the diff signal is package manifest/lockfile maintenance.");
+    lines.push(
+      `- Describe dependency-only updates as feature delivery work: rejected because ${sampleText} is package/lockfile maintenance.`,
+    );
   } else if (facts.profile === "tests-only") {
-    lines.push("- Present test-only work as a feature implementation: rejected because the diff signal shows verification changes without runtime edits.");
+    lines.push(
+      `- Present test-only work as a feature implementation: rejected because ${sampleText} shows verification changes without runtime edits.`,
+    );
   } else if (facts.hasCode && facts.hasTests) {
-    lines.push("- Split code and tests into unrelated narratives: rejected because reviewers need one cohesive explanation for behavior plus verification.");
+    lines.push(
+      `- Split code and tests into unrelated narratives: rejected because ${sampleText} needs one cohesive behavior+verification explanation.`,
+    );
   } else if (facts.hasCode) {
-    lines.push("- Infer intent from the issue title alone and ignore touched modules: rejected because file-level signals expose the real review surface.");
+    lines.push(
+      `- Infer intent from the issue title alone and ignore touched modules [${moduleText}]: rejected because file-level evidence ${sampleText} exposes the actual review surface.`,
+    );
   } else {
-    lines.push(`- Overfit the rationale to \`${context.mode}\` mode defaults when stronger signals are missing: rejected in favor of explicit fallback text.`);
+    lines.push(
+      `- Overfit the rationale to \`${context.mode}\` mode defaults when stronger signals are missing: rejected in favor of explicit fallback text.`,
+    );
   }
 
   if (facts.hasChangedFileSignals) {
