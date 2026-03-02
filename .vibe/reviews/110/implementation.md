@@ -1,0 +1,49 @@
+# Implementation Pass
+
+## Scope
+- Issue:
+- Goal:
+
+## Checklist
+- [ ] Diff kept focused to issue scope
+- [ ] Behavior changes documented
+- [ ] Follow-up work listed (if any)
+
+## Notes
+- 
+
+## Run 2026-03-02T21:56:55.104Z
+- run_id: pr-111-issue-110-attempt-1
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+New newline normalization addresses the reported /n- formatting bug, but one transformation is broader than necessary and can mutate intentional escaped content.
+
+### Findings
+- [P2] Global \\n replacement can rewrite intentional escaped text (src/core/review-pr.ts:891)
+
+## Run 2026-03-02T21:59:22.711Z
+- run_id: pr-111-issue-110-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The follow-up body formatter now normalizes only malformed newline markers that precede markdown structural tokens, reducing unintended content mutation while fixing the reported '/n-' rendering issue. It also adds a normalization marker only when a transformation occurred.
+
+### Findings
+- none
+
+## Run 2026-03-02T22:12:31.235Z
+- run_id: pr-111-issue-110-attempt-1-rerun-standalone-n
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The /n normalization rule is now constrained to standalone malformed markers (start-of-line or whitespace-delimited), preventing accidental rewrites of embedded URL patterns while preserving intended markdown newline recovery for list/heading tokens.
+
+### Findings
+- none

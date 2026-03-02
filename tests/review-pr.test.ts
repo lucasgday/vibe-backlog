@@ -341,6 +341,94 @@ describe("review PR helpers", () => {
     expect(result.label).toBe("bug");
   });
 
+  it("normalizes escaped and literal newline markers in follow-up issue body", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:cli" }] }) };
+      }
+      if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ name: "bug" }, { name: "status:backlog" }]) };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const bodyFileFlagIndex = args.findIndex((entry) => entry === "--body-file");
+        const bodyFilePath = bodyFileFlagIndex >= 0 ? String(args[bodyFileFlagIndex + 1] ?? "") : "";
+        expect(bodyFilePath.length).toBeGreaterThan(0);
+        const bodyFromFile = readFileSync(bodyFilePath, "utf8");
+        expect(bodyFromFile).toContain("## Review Summary");
+        expect(bodyFromFile).toContain("<!-- vibe:followup-summary-normalized:newlines -->");
+        expect(bodyFromFile).toContain("## vibe review\n- Attempts: 1/1\n1. step one\n## Notes\n- Unresolved findings: 1");
+        expect(bodyFromFile).not.toContain("/n-");
+        expect(bodyFromFile).not.toContain("/n1.");
+        expect(bodyFromFile).not.toContain("/n##");
+        expect(bodyFromFile).not.toContain("\\n-");
+        expect(bodyFromFile).not.toContain("\\n1.");
+        expect(bodyFromFile).not.toContain("\\n##");
+        return { stdout: "https://example.test/issues/505\n" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await createReviewFollowUpIssue({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      sourceIssueTitle: "review command",
+      findings: [sampleFinding({ kind: "defect", severity: "P1" })],
+      reviewSummary: "## vibe review /n- Attempts: 1/1\\n1. step one /n## Notes\\n- Unresolved findings: 1",
+      milestoneTitle: null,
+      dryRun: false,
+      overrideLabel: null,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.number).toBe(505);
+  });
+
+  it("does not rewrite url fragments that contain /n# patterns", async () => {
+    const execaMock = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "repos/acme/demo/issues?state=open&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "view") {
+        return { stdout: JSON.stringify({ labels: [{ name: "module:cli" }] }) };
+      }
+      if (cmd === "gh" && args[0] === "label" && args[1] === "list") {
+        return { stdout: JSON.stringify([{ name: "bug" }, { name: "status:backlog" }]) };
+      }
+      if (cmd === "gh" && args[0] === "issue" && args[1] === "create") {
+        const bodyFileFlagIndex = args.findIndex((entry) => entry === "--body-file");
+        const bodyFilePath = bodyFileFlagIndex >= 0 ? String(args[bodyFileFlagIndex + 1] ?? "") : "";
+        const bodyFromFile = readFileSync(bodyFilePath, "utf8");
+        expect(bodyFromFile).toContain("https://docs.example.com/n#intro");
+        expect(bodyFromFile).toContain("\n- list item");
+        return { stdout: "https://example.test/issues/506\n" };
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(" ")}`);
+    });
+
+    const result = await createReviewFollowUpIssue({
+      execaFn: execaMock as never,
+      sourceIssueId: 34,
+      sourceIssueTitle: "review command",
+      findings: [sampleFinding({ kind: "defect", severity: "P1" })],
+      reviewSummary: "See docs https://docs.example.com/n#intro and then /n- list item",
+      milestoneTitle: null,
+      dryRun: false,
+      overrideLabel: null,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.number).toBe(506);
+  });
+
   it("retries follow-up issue creation without labels when label add fails", async () => {
     let issueCreateAttempts = 0;
     const execaMock = vi.fn(async (cmd: string, args: string[]) => {
