@@ -45,3 +45,15 @@ One defect found in README managed-block recovery logic during scaffold updates.
 
 ### Findings
 - [P2] Partial README workflow markers are silently ignored while scaffold metadata still advances (src/core/init.ts:467)
+
+## Run 2026-03-02T11:40:01.144Z
+- run_id: issue-22-pr-96-attempt-1-passrunner-20260302
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 defect found: malformed one-sided README workflow markers can leave docs unrepaired while scaffold metadata is still advanced.
+
+### Findings
+- [P2] One-sided README workflow markers are ignored, allowing a false up-to-date scaffold state (src/core/init.ts:466)

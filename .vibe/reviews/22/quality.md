@@ -53,3 +53,15 @@ Coverage is good for happy-path/idempotency, but a key malformed-marker regressi
 
 ### Findings
 - [P2] Missing regression test for one-sided workflow marker corruption (tests/cli-update.test.ts:254)
+
+## Run 2026-03-02T11:40:01.146Z
+- run_id: issue-22-pr-96-attempt-1-passrunner-20260302
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 test gap found: malformed marker corruption paths are not covered.
+
+### Findings
+- [P2] Missing regression tests for start-only/end-only workflow marker corruption (tests/cli-update.test.ts:254)

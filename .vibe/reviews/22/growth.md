@@ -45,3 +45,15 @@ The feature likely improves onboarding, but impact cannot currently be measured.
 
 ### Findings
 - [P3] No measurable activation signal for README workflow scaffold adoption (src/core/init.ts:447)
+
+## Run 2026-03-02T11:40:01.147Z
+- run_id: issue-22-pr-96-attempt-1-passrunner-20260302
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 growth instrumentation gap found: feature impact is not measurable from current outputs.
+
+### Findings
+- [P3] No observable adoption signal for README workflow scaffold (src/core/init.ts:447)

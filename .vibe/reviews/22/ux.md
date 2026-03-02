@@ -47,3 +47,15 @@ No product UI surface changed; assumption: markdown docs use standard readabilit
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:40:01.146Z
+- run_id: issue-22-pr-96-attempt-1-passrunner-20260302
+- attempt: 1/5
+- findings: 1
+- autofix_applied: no
+
+### Summary
+1 documentation UX/accessibility improvement found.
+
+### Findings
+- [P3] Managed workflow section relies on Mermaid only without text fallback (README.md:467)
