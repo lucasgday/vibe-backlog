@@ -21,3 +21,15 @@ The change implements a managed README Mermaid workflow block for `.vibe` repos 
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:25:05.790Z
+- run_id: issue-22-pr-96-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+The follow-up change addresses the reported boundary-detection bug by switching README workflow marker detection from raw substring search to standalone-line parsing, preventing inline marker mentions from being treated as managed block boundaries.
+
+### Findings
+- none

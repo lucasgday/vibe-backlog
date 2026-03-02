@@ -29,3 +29,15 @@ Regression coverage was added for insertion, replacement, dry-run behavior, and 
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:25:05.791Z
+- run_id: issue-22-pr-96-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+A regression test was added to cover inline marker mentions and confirm managed block insertion remains correct and idempotent. Focused and full test/build validation passed.
+
+### Findings
+- none

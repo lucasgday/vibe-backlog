@@ -21,3 +21,15 @@ No new trust boundary or secret-handling paths were introduced. Marker-bounded r
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:25:05.791Z
+- run_id: issue-22-pr-96-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+No new privileged behavior was introduced. The fix narrows replacement targeting and reduces accidental overwrite risk in README management logic.
+
+### Findings
+- none

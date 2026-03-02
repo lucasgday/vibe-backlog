@@ -21,3 +21,15 @@ Operational impact is low and controlled: scaffold template versioning is update
 
 ### Findings
 - none
+
+## Run 2026-03-02T11:25:05.791Z
+- run_id: issue-22-pr-96-attempt-1b
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Operational risk is low. The change is localized to marker parsing and test coverage, with no dependency, CI, or release pipeline modifications.
+
+### Findings
+- none
