@@ -29,10 +29,10 @@ vibe preflight
 vibe postflight --apply --dry-run
 ```
 
-If `gh` is unavailable in the target repo, run:
+`init` now skips tracker bootstrap by default. If you want to create tracker taxonomy immediately, run:
 
 ```bash
-vibe init --skip-tracker
+vibe init --bootstrap-tracker
 ```
 
 For phased sharing (pilot -> beta -> social) and copy/paste launch messages, see [SHARE.md](./SHARE.md).
@@ -99,7 +99,9 @@ cd /path/to/another-repo
 # one-time setup for agent-first workflow
 vibe init --dry-run
 vibe init
-# if gh is unavailable, scaffold local files only
+# optional: create tracker labels/milestones immediately
+# vibe init --bootstrap-tracker
+# compatibility alias (same default behavior):
 # vibe init --skip-tracker
 
 # now these commands are valid
@@ -149,6 +151,7 @@ vibe postflight --apply
 `preflight` now prints a security snapshot (policy, gitleaks availability, last scan), a hint when `.vibe` exists but tracker bootstrap marker is missing, and read-only semantic milestone suggestions for issues without milestone.
 `preflight` also performs a best-effort, non-blocking tool version check and prints an explicit `self update` command when a newer `vibe-backlog` release is available.
 `update` checks/applies `.vibe` scaffold updates with metadata tracking in `.vibe/scaffold.json`, dry-run diff preview, and marker-safe preservation of protected sections.
+`init` scaffolds local `.vibe` files and skips tracker bootstrap by default; use `--bootstrap-tracker` to opt in tracker GH operations during init.
 `init`/`update` also scaffold a managed README workflow section (`<!-- vibe:workflow-docs:start --> ... <!-- vibe:workflow-docs:end -->`) with a Mermaid diagram, preserving non-managed README content.
 `update --json` includes `readme_workflow_status` with one of: `created` (workflow block created, including first insertion into an existing README), `updated` (existing managed block refreshed), `unchanged` (already up-to-date), `repaired` (malformed markers were repaired).
 `status` shows active turn, in-progress issues, hygiene warnings, and branch PR snapshot.
@@ -229,6 +232,7 @@ node dist/cli.cjs pr ready --pr <n> --wait-seconds 30
 node dist/cli.cjs pr ready --branch <name> --refresh --wait-seconds 30
 node dist/cli.cjs init --dry-run
 node dist/cli.cjs init
+node dist/cli.cjs init --bootstrap-tracker
 node dist/cli.cjs tracker bootstrap --dry-run
 node dist/cli.cjs tracker bootstrap
 node dist/cli.cjs tracker reconcile --dry-run

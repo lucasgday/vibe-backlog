@@ -28,19 +28,8 @@ describe.sequential("cli init", () => {
     }
   });
 
-  it("initializes empty repo scaffold and runs tracker bootstrap", async () => {
-    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
-      if (args[0] === "repo" && args[1] === "view") {
-        return { stdout: "acme/demo\n" };
-      }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
-        return { stdout: "[]" };
-      }
-      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
-        return { stdout: "[]" };
-      }
-      return { stdout: "" };
-    });
+  it("initializes empty repo scaffold without tracker bootstrap by default", async () => {
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
 
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -63,6 +52,31 @@ describe.sequential("cli init", () => {
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("```mermaid");
     expect(readFileSync(path.join(tempDir, "README.md"), "utf8")).toContain("Workflow steps (text fallback):");
     expect(readFileSync(path.join(tempDir, ".gitignore"), "utf8")).toContain(".vibe/runtime");
+    expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(false);
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("runs tracker bootstrap when init receives --bootstrap-tracker", async () => {
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return { stdout: "acme/demo\n" };
+      }
+      if (args[0] === "api" && args[1] === "repos/acme/demo/milestones?state=all&per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      if (args[0] === "api" && args[1] === "repos/acme/demo/labels?per_page=100&page=1") {
+        return { stdout: "[]" };
+      }
+      return { stdout: "" };
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--bootstrap-tracker"]);
+
     expect(existsSync(getTrackerBootstrapMarkerPath())).toBe(true);
 
     const commands = execaMock.mock.calls.map((call) => [call[0], call[1]] as [string, string[]]);
@@ -120,10 +134,26 @@ describe.sequential("cli init", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const program = createProgram(execaMock as never);
-    await program.parseAsync(["node", "vibe", "init", "--dry-run", "--skip-tracker"]);
+    await program.parseAsync(["node", "vibe", "init", "--dry-run"]);
 
     expect(existsSync(path.join(tempDir, ".vibe"))).toBe(false);
     expect(existsSync(path.join(tempDir, "AGENTS.md"))).toBe(false);
     expect(existsSync(path.join(tempDir, ".gitignore"))).toBe(false);
+  });
+
+  it("fails when init receives both --bootstrap-tracker and --skip-tracker", async () => {
+    const errors: string[] = [];
+    const execaMock = vi.fn(async () => ({ stdout: "" }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((arg) => String(arg)).join(" "));
+    });
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "init", "--bootstrap-tracker", "--skip-tracker"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.some((line) => line.includes("use either --bootstrap-tracker or --skip-tracker"))).toBe(true);
+    expect(execaMock).not.toHaveBeenCalled();
   });
 });
