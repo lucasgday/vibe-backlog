@@ -345,6 +345,19 @@ function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function extractUrl(value: string): string | null {
+  const match = /https?:\/\/\S+/.exec(value);
+  return match?.[0] ? match[0].trim() : null;
+}
+
+function extractPrNumberFromUrl(url: string | null): number | null {
+  if (!url) return null;
+  const match = /\/pull\/(\d+)(?:\/|$)/.exec(url);
+  if (!match?.[1]) return null;
+  const parsed = Number(match[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function parsePortNumber(value: unknown): number | null {
   if (typeof value === "number") {
     if (!Number.isInteger(value)) return null;
@@ -702,23 +715,28 @@ async function ensurePostflightApplyPullRequest(params: {
   baseBranch: string;
   dryRun: boolean;
   ensurePr: boolean;
-}): Promise<{ openPrBefore: number | null }> {
+}): Promise<{ openPrBefore: number | null; createdPrNumber: number | null }> {
   const { execaFn, issueId, branch, baseBranch, dryRun, ensurePr } = params;
   if (dryRun) {
-    return { openPrBefore: null };
+    return { openPrBefore: null, createdPrNumber: null };
   }
 
   const normalizedBranch = branch.trim();
   if (!normalizedBranch) {
-    return { openPrBefore: null };
+    return { openPrBefore: null, createdPrNumber: null };
   }
 
   const openPrBefore = await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
   if (openPrBefore || !ensurePr) {
-    return { openPrBefore };
+    return { openPrBefore, createdPrNumber: null };
   }
 
   const normalizedBaseBranch = baseBranch.trim() || "main";
+  if (normalizedBranch === normalizedBaseBranch) {
+    console.log(`postflight --apply: skip auto-create PR because branch '${normalizedBranch}' equals base '${normalizedBaseBranch}'.`);
+    return { openPrBefore: null, createdPrNumber: null };
+  }
+
   const args = [
     "pr",
     "create",
@@ -733,9 +751,16 @@ async function ensurePostflightApplyPullRequest(params: {
   ];
   console.log(`postflight --apply: no open PR for branch '${normalizedBranch}'. Auto-creating one.`);
   printGhCommand(args);
-  await runGhWithRetry(execaFn, args, { stdio: "inherit" });
+  const created = await runGhWithRetry(execaFn, args, { stdio: "pipe" });
+  const createdUrl = extractUrl(created.stdout);
+  const createdPrNumber = extractPrNumberFromUrl(createdUrl);
+  if (createdPrNumber && createdUrl) {
+    console.log(`postflight --apply: auto-created PR #${createdPrNumber} ${createdUrl}`);
+  } else if (createdUrl) {
+    console.log(`postflight --apply: auto-created PR ${createdUrl}`);
+  }
 
-  return { openPrBefore: null };
+  return { openPrBefore: null, createdPrNumber };
 }
 
 async function resolveCurrentBranchName(execaFn: ExecaFn): Promise<string> {
@@ -2494,6 +2519,13 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
         const updates = parsed.data.tracker_updates ?? [];
         const cmds = buildTrackerCommands(issueId, updates);
         const linkedPrNumbers = collectLinkedPrNumbers(updates);
+        if (prEnsure.createdPrNumber && !linkedPrNumbers.includes(prEnsure.createdPrNumber)) {
+          linkedPrNumbers.push(prEnsure.createdPrNumber);
+          cmds.unshift({
+            cmd: "gh",
+            args: ["issue", "comment", issueId, "--body", `Linked PR: #${prEnsure.createdPrNumber}`],
+          });
+        }
 
         if (!cmds.length && !linkedPrNumbers.length) {
           console.log("postflight --apply: no hay tracker_updates aplicables.");
