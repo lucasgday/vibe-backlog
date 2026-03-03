@@ -75,7 +75,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(3);
+    expect(execaMock).toHaveBeenCalledTimes(4);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -85,11 +85,28 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
-      ["issue", "comment", "2", "--body", "Done."],
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
       { stdio: "inherit" },
     );
     expect(execaMock).toHaveBeenNthCalledWith(
       3,
+      "gh",
+      ["issue", "comment", "2", "--body", "Done."],
+      { stdio: "inherit" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      4,
       "gh",
       ["issue", "close", "2", "--comment", "Closed by postflight."],
       { stdio: "inherit" },
@@ -195,7 +212,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(4);
+    expect(execaMock).toHaveBeenCalledTimes(5);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -205,12 +222,34 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
+      { stdio: "inherit" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      3,
+      "gh",
       ["issue", "comment", "2", "--body", "Linked PR: #7"],
       { stdio: "inherit" },
     );
-    expect(execaMock).toHaveBeenNthCalledWith(3, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
     expect(execaMock).toHaveBeenNthCalledWith(
       4,
+      "gh",
+      ["pr", "view", "7", "--json", "body,url"],
+      { stdio: "pipe" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      5,
       "gh",
       ["pr", "edit", "7", "--body", "Implement turn context\n\nFixes #2"],
       { stdio: "inherit" },
@@ -269,7 +308,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(3);
+    expect(execaMock).toHaveBeenCalledTimes(4);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -279,10 +318,27 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
+      { stdio: "inherit" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      3,
+      "gh",
       ["issue", "comment", "2", "--body", "Linked PR: #7"],
       { stdio: "inherit" },
     );
-    expect(execaMock).toHaveBeenNthCalledWith(3, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
+    expect(execaMock).toHaveBeenNthCalledWith(4, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
     expect(process.exitCode).toBeUndefined();
   });
 
