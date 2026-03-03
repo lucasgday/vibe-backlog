@@ -75,7 +75,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(3);
+    expect(execaMock).toHaveBeenCalledTimes(4);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -85,16 +85,211 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
+      { stdio: "pipe" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      3,
+      "gh",
       ["issue", "comment", "2", "--body", "Done."],
       { stdio: "inherit" },
     );
     expect(execaMock).toHaveBeenNthCalledWith(
-      3,
+      4,
       "gh",
       ["issue", "close", "2", "--comment", "Closed by postflight."],
       { stdio: "inherit" },
     );
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("records auto-created PR back into tracker comments when PR URL is returned", async () => {
+    const postflightPath = path.join(tempDir, "auto-pr-link-postflight.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-13T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "Done." }],
+          next_actions: ["Merge branch."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Revert commit.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      if (args[0] === "pr" && args[1] === "create") {
+        return { stdout: "https://example.test/pull/77\n" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) =>
+          cmd === "gh" &&
+          Array.isArray(args) &&
+          args[0] === "issue" &&
+          args[1] === "comment" &&
+          args[2] === "2" &&
+          args[3] === "--body" &&
+          args[4] === "Linked PR: #77",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not auto-create PR when --no-ensure-pr is provided", async () => {
+    const postflightPath = path.join(tempDir, "no-ensure-pr-postflight.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-13T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "issue-2-example",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "Done." }],
+          next_actions: ["Merge branch."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Revert commit.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--no-ensure-pr", "--skip-branch-cleanup"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("skips auto-create PR when branch equals base branch", async () => {
+    const postflightPath = path.join(tempDir, "same-branch-postflight.json");
+    writeFileSync(
+      postflightPath,
+      JSON.stringify(
+        {
+          version: 1,
+          meta: {
+            timestamp: "2026-02-13T00:00:00.000Z",
+            actor: "agent",
+            mode: "cli",
+          },
+          work: {
+            issue_id: 2,
+            branch: "main",
+            base_branch: "main",
+          },
+          checks: {
+            tests: {
+              ran: true,
+              result: "pass",
+            },
+          },
+          tracker_updates: [{ type: "comment_append", body: "Done." }],
+          next_actions: ["Merge branch."],
+          risks: {
+            summary: "Low risk.",
+            rollback_plan: "Revert commit.",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const execaMock = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return { stdout: "[]" };
+      }
+      return { stdout: "" };
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = createProgram(execaMock as never);
+    await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(
+      execaMock.mock.calls.some(
+        ([cmd, args]) => cmd === "gh" && Array.isArray(args) && args[0] === "pr" && args[1] === "create",
+      ),
+    ).toBe(false);
   });
 
   it("rejects non-numeric issue_id before applying updates", async () => {
@@ -195,7 +390,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(4);
+    expect(execaMock).toHaveBeenCalledTimes(5);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -205,12 +400,34 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
+      { stdio: "pipe" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      3,
+      "gh",
       ["issue", "comment", "2", "--body", "Linked PR: #7"],
       { stdio: "inherit" },
     );
-    expect(execaMock).toHaveBeenNthCalledWith(3, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
     expect(execaMock).toHaveBeenNthCalledWith(
       4,
+      "gh",
+      ["pr", "view", "7", "--json", "body,url"],
+      { stdio: "pipe" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      5,
       "gh",
       ["pr", "edit", "7", "--body", "Implement turn context\n\nFixes #2"],
       { stdio: "inherit" },
@@ -269,7 +486,7 @@ describe.sequential("cli postflight --apply", () => {
     const program = createProgram(execaMock as never);
     await program.parseAsync(["node", "vibe", "postflight", "--file", postflightPath, "--apply", "--skip-branch-cleanup"]);
 
-    expect(execaMock).toHaveBeenCalledTimes(3);
+    expect(execaMock).toHaveBeenCalledTimes(4);
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
       "gh",
@@ -279,10 +496,27 @@ describe.sequential("cli postflight --apply", () => {
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "gh",
+      [
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        "issue-2-example",
+        "--title",
+        "#2 postflight apply",
+        "--body",
+        "Fixes #2",
+      ],
+      { stdio: "pipe" },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      3,
+      "gh",
       ["issue", "comment", "2", "--body", "Linked PR: #7"],
       { stdio: "inherit" },
     );
-    expect(execaMock).toHaveBeenNthCalledWith(3, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
+    expect(execaMock).toHaveBeenNthCalledWith(4, "gh", ["pr", "view", "7", "--json", "body,url"], { stdio: "pipe" });
     expect(process.exitCode).toBeUndefined();
   });
 

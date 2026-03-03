@@ -345,6 +345,19 @@ function parsePositiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
+function extractUrl(value: string): string | null {
+  const match = /https?:\/\/\S+/.exec(value);
+  return match?.[0] ? match[0].trim() : null;
+}
+
+function extractPrNumberFromUrl(url: string | null): number | null {
+  if (!url) return null;
+  const match = /\/pull\/(\d+)(?:\/|$)/.exec(url);
+  if (!match?.[1]) return null;
+  const parsed = Number(match[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function parsePortNumber(value: unknown): number | null {
   if (typeof value === "number") {
     if (!Number.isInteger(value)) return null;
@@ -672,6 +685,7 @@ async function enforcePostflightApplyReviewGate(params: {
   issueId: string;
   branch: string;
   dryRun: boolean;
+  prNumber?: number | null;
 }): Promise<void> {
   const { execaFn, issueId, branch, dryRun } = params;
   if (dryRun) return;
@@ -679,7 +693,8 @@ async function enforcePostflightApplyReviewGate(params: {
   const normalizedBranch = branch.trim();
   if (!normalizedBranch) return;
 
-  const prNumber = await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
+  const hasExplicitPrNumber = Object.prototype.hasOwnProperty.call(params, "prNumber");
+  const prNumber = hasExplicitPrNumber ? (params.prNumber ?? null) : await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
   if (!prNumber) return;
 
   const repo = await resolveRepoNameWithOwner(execaFn);
@@ -691,6 +706,61 @@ async function enforcePostflightApplyReviewGate(params: {
   throw new Error(
     `postflight --apply: review gate missing for branch '${normalizedBranch}' HEAD ${shortHead} on PR #${prNumber}. Run: node dist/cli.cjs review --issue ${issueId}`,
   );
+}
+
+async function ensurePostflightApplyPullRequest(params: {
+  execaFn: ExecaFn;
+  issueId: string;
+  branch: string;
+  baseBranch: string;
+  dryRun: boolean;
+  ensurePr: boolean;
+}): Promise<{ openPrBefore: number | null; createdPrNumber: number | null }> {
+  const { execaFn, issueId, branch, baseBranch, dryRun, ensurePr } = params;
+  if (dryRun) {
+    return { openPrBefore: null, createdPrNumber: null };
+  }
+
+  const normalizedBranch = branch.trim();
+  if (!normalizedBranch) {
+    return { openPrBefore: null, createdPrNumber: null };
+  }
+
+  const openPrBefore = await findOpenPullRequestNumberByBranch(execaFn, normalizedBranch);
+  if (openPrBefore || !ensurePr) {
+    return { openPrBefore, createdPrNumber: null };
+  }
+
+  const normalizedBaseBranch = baseBranch.trim() || "main";
+  if (normalizedBranch === normalizedBaseBranch) {
+    console.log(`postflight --apply: skip auto-create PR because branch '${normalizedBranch}' equals base '${normalizedBaseBranch}'.`);
+    return { openPrBefore: null, createdPrNumber: null };
+  }
+
+  const args = [
+    "pr",
+    "create",
+    "--base",
+    normalizedBaseBranch,
+    "--head",
+    normalizedBranch,
+    "--title",
+    `#${issueId} postflight apply`,
+    "--body",
+    `Fixes #${issueId}`,
+  ];
+  console.log(`postflight --apply: no open PR for branch '${normalizedBranch}'. Auto-creating one.`);
+  printGhCommand(args);
+  const created = await runGhWithRetry(execaFn, args, { stdio: "pipe" });
+  const createdUrl = extractUrl(created.stdout);
+  const createdPrNumber = extractPrNumberFromUrl(createdUrl);
+  if (createdPrNumber && createdUrl) {
+    console.log(`postflight --apply: auto-created PR #${createdPrNumber} ${createdUrl}`);
+  } else if (createdUrl) {
+    console.log(`postflight --apply: auto-created PR ${createdUrl}`);
+  }
+
+  return { openPrBefore: null, createdPrNumber };
 }
 
 async function resolveCurrentBranchName(execaFn: ExecaFn): Promise<string> {
@@ -2378,6 +2448,7 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
     .option("-f, --file <path>", "Path to postflight JSON", ".vibe/artifacts/postflight.json")
     .option("--apply", "Apply tracker updates using gh", false)
     .option("--dry-run", "Print gh commands without executing them", false)
+    .option("--no-ensure-pr", "Skip automatic PR ensure before applying tracker updates")
     .option("--skip-branch-cleanup", "Skip automatic local branch cleanup routine", false)
     .action(async (opts) => {
       const fs = await import("node:fs/promises");
@@ -2428,16 +2499,33 @@ export function createProgram(execaFn: ExecaFn = execa): Command {
           return;
         }
 
+        const prEnsure = await ensurePostflightApplyPullRequest({
+          execaFn,
+          issueId,
+          branch: parsed.data.work.branch,
+          baseBranch: parsed.data.work.base_branch,
+          dryRun: Boolean(opts.dryRun),
+          ensurePr: Boolean(opts.ensurePr),
+        });
+
         await enforcePostflightApplyReviewGate({
           execaFn,
           issueId,
           branch: parsed.data.work.branch,
           dryRun: Boolean(opts.dryRun),
+          prNumber: prEnsure.openPrBefore,
         });
 
         const updates = parsed.data.tracker_updates ?? [];
         const cmds = buildTrackerCommands(issueId, updates);
         const linkedPrNumbers = collectLinkedPrNumbers(updates);
+        if (prEnsure.createdPrNumber && !linkedPrNumbers.includes(prEnsure.createdPrNumber)) {
+          linkedPrNumbers.push(prEnsure.createdPrNumber);
+          cmds.unshift({
+            cmd: "gh",
+            args: ["issue", "comment", issueId, "--body", `Linked PR: #${prEnsure.createdPrNumber}`],
+          });
+        }
 
         if (!cmds.length && !linkedPrNumbers.length) {
           console.log("postflight --apply: no hay tracker_updates aplicables.");
