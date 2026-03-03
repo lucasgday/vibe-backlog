@@ -23,3 +23,15 @@ Coverage improved, but key edge-case tests are missing for the new option/branch
 
 ### Findings
 - [P2] No regression tests for same-branch and `--no-ensure-pr` paths (tests/cli-postflight.test.ts:27)
+
+## Run 2026-03-03T17:55:40.860Z
+- run_id: issue-112-attempt-1-rerun
+- attempt: 1/5
+- findings: 0
+- autofix_applied: no
+
+### Summary
+Quality coverage is adequate for this change, including new edge-path tests for same-branch and `--no-ensure-pr` behavior.
+
+### Findings
+- none
